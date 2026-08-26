@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export type ProductViewKey = "content" | "editor" | "themes" | "account";
 
@@ -48,6 +48,25 @@ function renderMarkdown(source: string) {
   });
 }
 
+function markdownToWechatHtml(source: string, theme: (typeof themes)[number]) {
+  const escape = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const lines = source.split("\n").map((line) => {
+    if (line.startsWith("### ")) return `<h3 style="margin:24px 0 10px;color:${theme.color};font-size:18px;line-height:1.5;font-weight:700;">${escape(line.slice(4))}</h3>`;
+    if (line.startsWith("## ")) return `<h2 style="margin:28px 0 14px;padding-left:12px;border-left:4px solid ${theme.color};color:${theme.color};font-size:21px;line-height:1.5;font-weight:700;">${escape(line.slice(3))}</h2>`;
+    if (line.startsWith("> ")) return `<blockquote style="margin:18px 0;padding:14px 16px;border-radius:4px;color:#5c6961;background:#edf2ee;font-size:15px;line-height:1.9;">${escape(line.slice(2))}</blockquote>`;
+    if (line.startsWith("- ")) return `<p style="margin:7px 0;padding-left:12px;color:#3f4943;font-size:16px;line-height:1.9;">• ${escape(line.slice(2))}</p>`;
+    if (!line.trim()) return `<p style="height:8px;margin:0;"><br></p>`;
+    return `<p style="margin:0 0 14px;color:#3f4943;font-size:16px;line-height:1.9;text-align:justify;">${escape(line)}</p>`;
+  }).join("");
+  return `<section style="padding:4px 0;background:${theme.bg};">${lines}</section>`;
+}
+
+async function readApi<T>(response: Response): Promise<T> {
+  const data = await response.json() as T & { error?: string };
+  if (!response.ok) throw new Error(data.error || "请求失败");
+  return data;
+}
+
 export function ProductView({ active, onNavigate }: { active: ProductViewKey; onNavigate: (view: ProductViewKey) => void }) {
   if (active === "content") return <ContentView onEdit={() => onNavigate("editor")} />;
   if (active === "themes") return <ThemesView onUse={() => onNavigate("editor")} />;
@@ -84,12 +103,60 @@ function EditorView() {
   const [showSync, setShowSync] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced] = useState(false);
+  const [accountName, setAccountName] = useState("尚未连接公众号");
+  const [author, setAuthor] = useState("编辑部");
+  const [digest, setDigest] = useState("公众号内容工作台如何把创作、排版和草稿同步连成一条完整工作流。");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [cover, setCover] = useState<File | null>(null);
+  const [syncError, setSyncError] = useState("");
+  const [draftMediaId, setDraftMediaId] = useState("");
   const currentTheme = themes.find((item) => item.id === theme) ?? themes[0];
   const words = useMemo(() => content.replace(/[#>*\-\s]/g, "").length, [content]);
 
-  function startSync() {
+  useEffect(() => {
+    fetch("/api/wechat/config")
+      .then((response) => readApi<{ configured: boolean; account: { name: string; defaultAuthor: string } | null }>(response))
+      .then((data) => {
+        if (data.account) {
+          setAccountName(data.account.name);
+          setAuthor(data.account.defaultAuthor || "编辑部");
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
+  async function startSync() {
+    setSyncError("");
+    if (!cover) {
+      setSyncError("请选择一张封面图片后再发送");
+      return;
+    }
     setSyncing(true);
-    window.setTimeout(() => { setSyncing(false); setSynced(true); }, 1800);
+    try {
+      const coverBody = new FormData();
+      coverBody.append("cover", cover);
+      const coverResult = await readApi<{ mediaId: string }>(await fetch("/api/wechat/cover", { method: "POST", body: coverBody }));
+      const draftResult = await readApi<{ mediaId: string }>(await fetch("/api/wechat/draft", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title,
+          author,
+          digest,
+          content: markdownToWechatHtml(content, currentTheme),
+          contentSourceUrl: sourceUrl,
+          thumbMediaId: coverResult.mediaId,
+          openComment: false,
+          fansOnlyComment: false,
+        }),
+      }));
+      setDraftMediaId(draftResult.mediaId);
+      setSynced(true);
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : "发送到草稿箱失败");
+    } finally {
+      setSyncing(false);
+    }
   }
 
   return <div className="editor-view">
@@ -109,7 +176,7 @@ function EditorView() {
       </aside>
     </div>
     {showSync && <div className="modal-backdrop"><div className="modal-card sync-modal">
-      {!synced ? <><button className="modal-close" onClick={() => setShowSync(false)}>×</button><span className="modal-symbol">微</span><p className="modal-kicker">WECHAT DRAFT</p><h2>{syncing ? "正在发送到草稿箱" : "发送前确认"}</h2><p>{syncing ? "正在上传正文图片、封面与文章内容，请稍候。" : "文章将以当前主题排版同步到“技术观察”的草稿箱。"}</p><div className="sync-summary"><span><small>目标公众号</small><strong>技术观察</strong></span><span><small>排版主题</small><strong>{currentTheme.name}</strong></span><span><small>正文检查</small><strong className="ok">已通过</strong></span></div>{syncing ? <div className="sync-progress"><i /></div> : <button className="sync-confirm" onClick={startSync}>确认并发送</button>}</> : <div className="sync-success"><span>✓</span><p className="modal-kicker">SYNC COMPLETE</p><h2>已发送到草稿箱</h2><p>你可以前往微信公众号后台继续预览或群发。</p><button className="sync-confirm" onClick={() => { setShowSync(false); setSynced(false); }}>完成</button></div>}
+      {!synced ? <><button className="modal-close" onClick={() => setShowSync(false)}>×</button><span className="modal-symbol">微</span><p className="modal-kicker">WECHAT DRAFT</p><h2>{syncing ? "正在发送到草稿箱" : "发送前确认"}</h2><p>{syncing ? "正在上传封面和文章内容，请勿关闭页面。" : `文章将以当前主题排版真实同步到“${accountName}”的草稿箱。`}</p><div className="draft-fields"><label>封面图片 <small>JPG / PNG / GIF / BMP，不超过 10MB</small><input type="file" accept="image/jpeg,image/png,image/gif,image/bmp" onChange={(event) => setCover(event.target.files?.[0] ?? null)} /></label><div><label>作者<input value={author} maxLength={16} onChange={(event) => setAuthor(event.target.value)} /></label><label>原文链接<input value={sourceUrl} type="url" placeholder="可选" onChange={(event) => setSourceUrl(event.target.value)} /></label></div><label>摘要<textarea value={digest} maxLength={128} onChange={(event) => setDigest(event.target.value)} /></label></div><div className="sync-summary"><span><small>目标公众号</small><strong>{accountName}</strong></span><span><small>排版主题</small><strong>{currentTheme.name}</strong></span><span><small>正文检查</small><strong className="ok">已通过</strong></span></div>{syncError && <div className="form-error">{syncError}</div>}{syncing ? <div className="sync-progress"><i /></div> : <button className="sync-confirm" onClick={startSync}>确认并发送到草稿箱</button>}</> : <div className="sync-success"><span>✓</span><p className="modal-kicker">SYNC COMPLETE</p><h2>已发送到草稿箱</h2><p>草稿 Media ID：{draftMediaId.slice(0, 10)}…<br />请前往微信公众号后台进行最终预览和群发。</p><button className="sync-confirm" onClick={() => { setShowSync(false); setSynced(false); setDraftMediaId(""); }}>完成</button></div>}
     </div></div>}
   </div>;
 }
@@ -128,12 +195,65 @@ function ThemesView({ onUse }: { onUse: () => void }) {
 
 function AccountView() {
   const [showConnect, setShowConnect] = useState(false);
-  const [connected, setConnected] = useState(true);
+  const [connected, setConnected] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [connecting, setConnecting] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [account, setAccount] = useState<{ name: string; appIdMasked: string; defaultAuthor: string; updatedAt: string } | null>(null);
+  const [historyCount, setHistoryCount] = useState(0);
+  const [name, setName] = useState("");
+  const [appId, setAppId] = useState("");
+  const [appSecret, setAppSecret] = useState("");
+  const [defaultAuthor, setDefaultAuthor] = useState("编辑部");
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      fetch("/api/wechat/config").then((response) => readApi<{ configured: boolean; account: typeof account }>(response)),
+      fetch("/api/wechat/history").then((response) => readApi<{ records: unknown[] }>(response)),
+    ]).then(([config, history]) => {
+      if (cancelled) return;
+      setConnected(config.configured);
+      setAccount(config.account);
+      setHistoryCount(history.records.length);
+      if (config.account) {
+        setName(config.account.name);
+        setDefaultAuthor(config.account.defaultAuthor);
+      }
+    }).catch((error: unknown) => {
+      if (!cancelled) setFormError(error instanceof Error ? error.message : "无法读取公众号配置");
+    }).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  async function connectAccount(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setConnecting(true);
+    setFormError("");
+    try {
+      const result = await readApi<{ configured: boolean; account: NonNullable<typeof account> }>(await fetch("/api/wechat/config", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, appId, appSecret, defaultAuthor }),
+      }));
+      setConnected(result.configured);
+      setAccount(result.account);
+      setAppSecret("");
+      setShowConnect(false);
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "连接失败");
+    } finally {
+      setConnecting(false);
+    }
+  }
+
   return <div className="product-view">
-    <ViewHeading kicker="WECHAT ACCOUNTS" title="公众号" description="管理授权账号、接口状态与草稿同步能力。" action={<button className="primary-btn" onClick={() => setShowConnect(true)}>＋ 连接公众号</button>} />
-    <section className="account-overview panel"><div className="account-avatar">微</div><div className="account-detail"><span className="status green"><i />接口正常</span><h2>技术观察</h2><p>服务号 · 已认证 <span>AppID: wx••••••7e2a</span></p></div><div className="account-stats"><span><small>本月同步</small><strong>9</strong></span><span><small>最近同步</small><strong>今天 10:31</strong></span><span><small>Token 状态</small><strong className="ok">正常</strong></span></div><button className="more-btn">···</button></section>
-    <div className="account-grid"><section className="panel account-section"><div className="section-head"><div><h3>能力与权限</h3><p>当前公众号开放接口检查</p></div><button>重新检测</button></div>{["获取接口调用凭证", "上传正文图片", "上传永久素材", "新建与更新草稿"].map((item) => <div className="permission-row" key={item}><span>✓</span><strong>{item}</strong><small>可用</small></div>)}</section><section className="panel account-section"><div className="section-head"><div><h3>安全设置</h3><p>凭证与网络访问保护</p></div></div><div className="security-callout"><span>锁</span><p><strong>AppSecret 已加密存储</strong><small>页面不会回显完整密钥，传输全程使用加密连接。</small></p></div><div className="setting-row"><span><strong>IP 白名单</strong><small>云端固定出口 IP</small></span><b className="ok">已配置</b></div><div className="setting-row"><span><strong>异常通知</strong><small>同步失败时通知管理员</small></span><button className="switch on"><i /></button></div></section></div>
-    {showConnect && <div className="modal-backdrop"><form className="modal-card connect-modal" onSubmit={(event) => { event.preventDefault(); setConnected(true); setShowConnect(false); }}><button type="button" className="modal-close" onClick={() => setShowConnect(false)}>×</button><p className="modal-kicker">CONNECT ACCOUNT</p><h2>连接微信公众号</h2><p>第一版通过 AppID 与 AppSecret 接入。请使用已认证的公众号，并先配置服务器 IP 白名单。</p><label>公众号名称<input placeholder="例如：品牌内容中心" required /></label><label>AppID<input placeholder="wx 开头的字符串" required /></label><label>AppSecret<input type="password" placeholder="粘贴后将加密保存" required /></label><div className="form-note">凭证仅用于服务端调用微信接口，不会发送到浏览器或展示给其他成员。</div><button className="sync-confirm" type="submit">验证并连接</button></form></div>}
-    {!connected && <div />}
+    <ViewHeading kicker="WECHAT ACCOUNTS" title="公众号" description="管理真实授权账号、接口状态与草稿同步能力。" action={<button className="primary-btn" onClick={() => { setFormError(""); setShowConnect(true); }}>{connected ? "更新凭证" : "＋ 连接公众号"}</button>} />
+    {loading ? <div className="account-empty panel">正在读取本地安全配置…</div> : connected && account ? <section className="account-overview panel"><div className="account-avatar">微</div><div className="account-detail"><span className="status green"><i />最近验证正常</span><h2>{account.name}</h2><p>已连接 <span>AppID: {account.appIdMasked}</span></p></div><div className="account-stats"><span><small>同步记录</small><strong>{historyCount}</strong></span><span><small>默认作者</small><strong>{account.defaultAuthor}</strong></span><span><small>凭证状态</small><strong className="ok">已加密</strong></span></div><button className="more-btn">···</button></section> : <section className="account-empty panel"><span>微</span><h2>尚未连接公众号</h2><p>连接后即可上传封面并将排版好的文章发送到真实草稿箱。</p><button className="primary-btn" onClick={() => setShowConnect(true)}>立即连接</button></section>}
+    <div className="account-grid"><section className="panel account-section"><div className="section-head"><div><h3>能力与权限</h3><p>连接时会调用微信接口进行真实检测</p></div><button onClick={() => setShowConnect(true)}>重新验证</button></div>{["获取稳定接口凭证", "上传永久封面素材", "新建公众号草稿", "记录同步结果"].map((item) => <div className="permission-row" key={item}><span>{connected ? "✓" : "○"}</span><strong>{item}</strong><small>{connected ? "已就绪" : "待连接"}</small></div>)}</section><section className="panel account-section"><div className="section-head"><div><h3>安全设置</h3><p>凭证与网络访问保护</p></div></div><div className="security-callout"><span>锁</span><p><strong>AppSecret 使用 AES-256-GCM 加密</strong><small>完整密钥不会回显；微信请求仅从本地服务端发出。</small></p></div><div className="setting-row"><span><strong>IP 白名单</strong><small>需在微信后台添加当前公网出口 IP</small></span><b className={connected ? "ok" : ""}>{connected ? "验证通过" : "待配置"}</b></div><div className="setting-row"><span><strong>发布保护</strong><small>目前只发送草稿，不自动群发</small></span><button className="switch on" aria-label="发布保护已开启"><i /></button></div></section></div>
+    {formError && !showConnect && <div className="page-error">{formError}</div>}
+    {showConnect && <div className="modal-backdrop"><form className="modal-card connect-modal" onSubmit={connectAccount}><button type="button" className="modal-close" onClick={() => setShowConnect(false)}>×</button><p className="modal-kicker">CONNECT ACCOUNT</p><h2>{connected ? "更新公众号凭证" : "连接微信公众号"}</h2><p>保存前会直接调用微信稳定 Token 接口验证 AppID、AppSecret 和 IP 白名单。</p><label>公众号名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：品牌内容中心" required /></label><label>AppID<input value={appId} onChange={(event) => setAppId(event.target.value)} placeholder="wx 开头的字符串" required /></label><label>AppSecret<input value={appSecret} onChange={(event) => setAppSecret(event.target.value)} type="password" placeholder={connected ? "请重新输入以验证" : "粘贴后将加密保存"} required /></label><label>默认作者<input value={defaultAuthor} onChange={(event) => setDefaultAuthor(event.target.value)} maxLength={16} required /></label><div className="form-note">请先在微信公众平台的 IP 白名单中添加本机当前公网出口 IP。凭证验证成功后才会保存。</div>{formError && <div className="form-error">{formError}</div>}<button className="sync-confirm" type="submit" disabled={connecting}>{connecting ? "正在验证微信接口…" : "验证并安全保存"}</button></form></div>}
   </div>;
 }

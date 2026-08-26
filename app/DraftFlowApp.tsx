@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ProductView, type ProductViewKey } from "./ProductViews";
 
 type NavKey = "dashboard" | "content" | "editor" | "themes" | "account";
@@ -34,7 +34,15 @@ function Icon({ name }: { name: NavKey }) {
 export function DraftFlowApp() {
   const [active, setActive] = useState<NavKey>("dashboard");
   const [toast, setToast] = useState("");
+  const [wechatAccount, setWechatAccount] = useState<{ name: string } | null>(null);
   const today = useMemo(() => new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "long" }).format(new Date()), []);
+
+  useEffect(() => {
+    fetch("/api/wechat/config")
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => setWechatAccount(data?.account ?? null))
+      .catch(() => setWechatAccount(null));
+  }, [active]);
 
   function openEditor() {
     setActive("editor");
@@ -78,7 +86,7 @@ export function DraftFlowApp() {
         <div className={`page-content ${active === "dashboard" ? "" : "view-hidden"}`}>
           <div className="welcome-row">
             <div><p className="eyebrow">{today}</p><h1>内容工作台</h1><p>从创作、排版到同步草稿箱，一处完成。</p></div>
-            <div className="account-chip"><span className="wechat-dot">微</span><div><small>当前公众号</small><strong>技术观察</strong></div><b>已连接</b></div>
+            <button className="account-chip" onClick={() => setActive("account")}><span className="wechat-dot">微</span><div><small>当前公众号</small><strong>{wechatAccount?.name ?? "尚未连接"}</strong></div><b className={wechatAccount ? "" : "pending"}>{wechatAccount ? "已连接" : "去配置"}</b></button>
           </div>
 
           <section className="metric-grid">

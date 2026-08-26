@@ -1,5 +1,20 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "entries": []
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1787727824485,
+      "tag": "0000_public_arclight",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1787727847468,
+      "tag": "0001_certain_the_captain",
+      "breakpoints": true
+    }
+  ]
 }
