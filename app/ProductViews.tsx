@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { auditArticle, autoFixMarkdown, normalizeEditorialText } from "@/lib/format-audit";
 import { findLocalMarkdownImages, markdownToWechatHtml } from "@/lib/markdown";
 
 export type ProductViewKey = "content" | "editor" | "themes" | "account";
@@ -48,9 +49,37 @@ const themes = [
 ];
 
 async function readApi<T>(response: Response): Promise<T> {
-  const data = await response.json() as T & { error?: string };
+  let data: T & { error?: string };
+  try {
+    data = await response.json() as T & { error?: string };
+  } catch {
+    throw new Error(`服务响应异常（HTTP ${response.status}），请稍后重试`);
+  }
   if (!response.ok) throw new Error(data.error || "请求失败");
   return data;
+}
+
+async function optimizeCoverImage(file: File) {
+  if (file.size <= 2 * 1024 * 1024) return file;
+  if (typeof createImageBitmap !== "function") throw new Error("当前浏览器无法自动压缩封面，请将图片压缩到 2MB 以内");
+  const bitmap = await createImageBitmap(file);
+  const maxSide = 1920;
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("封面图片处理失败，请更换图片后重试");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+
+  for (const quality of [0.9, 0.82, 0.74, 0.66]) {
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+    if (blob && blob.size <= 2 * 1024 * 1024) return new File([blob], "draft-cover.jpg", { type: "image/jpeg" });
+  }
+  throw new Error("封面自动压缩后仍超过 2MB，请换一张尺寸更小的图片");
 }
 
 export function ProductView({ active, onNavigate, importedDraft, onImportMarkdown }: { active: ProductViewKey; onNavigate: (view: ProductViewKey) => void; importedDraft: ImportedMarkdownDraft | null; onImportMarkdown: () => void }) {
@@ -94,16 +123,20 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
   const [digest, setDigest] = useState(importedDraft?.digest || "公众号内容工作台如何把创作、排版和草稿同步连成一条完整工作流。");
   const [sourceUrl, setSourceUrl] = useState("");
   const [cover, setCover] = useState<File | null>(null);
+  const [coverNote, setCoverNote] = useState("");
   const [syncError, setSyncError] = useState("");
   const [draftMediaId, setDraftMediaId] = useState("");
   const [imageUploading, setImageUploading] = useState(false);
   const [editorError, setEditorError] = useState("");
+  const [showAudit, setShowAudit] = useState(false);
+  const [auditNotice, setAuditNotice] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const bodyImageInputRef = useRef<HTMLInputElement>(null);
   const currentTheme = themes.find((item) => item.id === theme) ?? themes[0];
   const words = useMemo(() => content.replace(/[#>*\-\s]/g, "").length, [content]);
   const renderedHtml = useMemo(() => markdownToWechatHtml(content, currentTheme), [content, currentTheme]);
   const localImages = useMemo(() => findLocalMarkdownImages(content), [content]);
+  const audit = useMemo(() => auditArticle({ title, content, digest }), [title, content, digest]);
 
   useEffect(() => {
     fetch("/api/wechat/config")
@@ -123,31 +156,70 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
       setSyncError("请选择一张封面图片后再发送");
       return;
     }
+    if (cover.size > 2 * 1024 * 1024) {
+      setSyncError("封面图片超过 2MB，请压缩后重新选择");
+      return;
+    }
     setSyncing(true);
     try {
-      const coverBody = new FormData();
-      coverBody.append("cover", cover);
-      const coverResult = await readApi<{ mediaId: string }>(await fetch("/api/wechat/cover", { method: "POST", body: coverBody }));
-      const draftResult = await readApi<{ mediaId: string }>(await fetch("/api/wechat/draft", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          title,
-          author,
-          digest,
-          content: renderedHtml,
-          contentSourceUrl: sourceUrl,
-          thumbMediaId: coverResult.mediaId,
-          openComment: false,
-          fansOnlyComment: false,
-        }),
-      }));
+      let coverResult: { mediaId: string };
+      try {
+        const coverBody = new FormData();
+        coverBody.append("cover", cover, cover.name);
+        coverResult = await readApi<{ mediaId: string }>(await fetch("/api/wechat/cover", { method: "POST", body: coverBody }));
+      } catch (error) {
+        throw new Error(`封面上传失败：${error instanceof Error ? error.message : "请重新选择图片"}`);
+      }
+
+      let draftResult: { mediaId: string };
+      try {
+        draftResult = await readApi<{ mediaId: string }>(await fetch("/api/wechat/draft", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            title,
+            author,
+            digest,
+            content: renderedHtml,
+            contentSourceUrl: sourceUrl,
+            thumbMediaId: coverResult.mediaId,
+            openComment: false,
+            fansOnlyComment: false,
+          }),
+        }));
+      } catch (error) {
+        throw new Error(`草稿创建失败：${error instanceof Error ? error.message : "请稍后重试"}`);
+      }
       setDraftMediaId(draftResult.mediaId);
       setSynced(true);
     } catch (error) {
       setSyncError(error instanceof Error ? error.message : "发送到草稿箱失败");
     } finally {
       setSyncing(false);
+    }
+  }
+
+  function applyFormatFixes() {
+    setContent((value) => autoFixMarkdown(value));
+    setTitle((value) => normalizeEditorialText(value));
+    setDigest((value) => normalizeEditorialText(value));
+    setAuditNotice("已修复异常空格、中英文间距和标题留白，内容观点未被改写。");
+  }
+
+  async function selectCover(file: File | null) {
+    setSyncError("");
+    setCoverNote("");
+    if (!file) {
+      setCover(null);
+      return;
+    }
+    try {
+      const optimized = await optimizeCoverImage(file);
+      setCover(optimized);
+      if (optimized !== file) setCoverNote(`已自动压缩为 ${(optimized.size / 1024 / 1024).toFixed(2)}MB，符合微信上传要求`);
+    } catch (error) {
+      setCover(null);
+      setSyncError(error instanceof Error ? error.message : "封面图片处理失败");
     }
   }
 
@@ -175,7 +247,7 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
   return <div className="editor-view">
     <div className="editor-toolbar">
       <div><span className="save-dot" />已自动保存 <b>·</b> {words} 字</div>
-      <div><button className="secondary-btn" onClick={onImportMarkdown}>导入 MD</button><button className="secondary-btn">预览全文</button><button className="sync-btn" onClick={() => setShowSync(true)}>同步到草稿箱 <span>→</span></button></div>
+      <div><button className="secondary-btn" onClick={onImportMarkdown}>导入 MD</button><button className="audit-btn" onClick={() => { setAuditNotice(""); setShowAudit(true); }}><span>✦</span> 智能审核 <i>{audit.score}</i></button><button className="sync-btn" onClick={() => setShowSync(true)}>同步到草稿箱 <span>→</span></button></div>
     </div>
     <div className="editor-grid">
       <section className="writing-pane">
@@ -192,8 +264,9 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
       </aside>
     </div>
     {showSync && <div className="modal-backdrop"><div className="modal-card sync-modal">
-      {!synced ? <><button className="modal-close" onClick={() => setShowSync(false)}>×</button><span className="modal-symbol">微</span><p className="modal-kicker">WECHAT DRAFT</p><h2>{syncing ? "正在发送到草稿箱" : "发送前确认"}</h2><p>{syncing ? "正在上传封面和文章内容，请勿关闭页面。" : `文章将以当前主题排版真实同步到“${accountName}”的草稿箱。`}</p><div className="draft-fields"><label>封面图片 <small>JPG / PNG / GIF / BMP，不超过 10MB</small><input type="file" accept="image/jpeg,image/png,image/gif,image/bmp" onChange={(event) => setCover(event.target.files?.[0] ?? null)} /></label><div><label>作者<input value={author} maxLength={16} onChange={(event) => setAuthor(event.target.value)} /></label><label>原文链接<input value={sourceUrl} type="url" placeholder="可选" onChange={(event) => setSourceUrl(event.target.value)} /></label></div><label>摘要<textarea value={digest} maxLength={128} onChange={(event) => setDigest(event.target.value)} /></label></div><div className="sync-summary"><span><small>目标公众号</small><strong>{accountName}</strong></span><span><small>排版主题</small><strong>{currentTheme.name}</strong></span><span><small>正文检查</small><strong className="ok">已通过</strong></span></div>{syncError && <div className="form-error">{syncError}</div>}{syncing ? <div className="sync-progress"><i /></div> : <button className="sync-confirm" onClick={startSync}>确认并发送到草稿箱</button>}</> : <div className="sync-success"><span>✓</span><p className="modal-kicker">SYNC COMPLETE</p><h2>已发送到草稿箱</h2><p>草稿 Media ID：{draftMediaId.slice(0, 10)}…<br />请前往微信公众号后台进行最终预览和群发。</p><button className="sync-confirm" onClick={() => { setShowSync(false); setSynced(false); setDraftMediaId(""); }}>完成</button></div>}
+      {!synced ? <><button className="modal-close" onClick={() => setShowSync(false)}>×</button><span className="modal-symbol">微</span><p className="modal-kicker">WECHAT DRAFT</p><h2>{syncing ? "正在发送到草稿箱" : "发送前确认"}</h2><p>{syncing ? "正在上传封面和文章内容，请勿关闭页面。" : `文章将以当前主题排版真实同步到“${accountName}”的草稿箱。`}</p><div className="draft-fields"><label>封面图片 <small>JPG / PNG / GIF / BMP，超过 2MB 自动压缩</small><input type="file" accept="image/jpeg,image/png,image/gif,image/bmp" onChange={(event) => void selectCover(event.target.files?.[0] ?? null)} />{coverNote && <small className="cover-note">✓ {coverNote}</small>}</label><div><label>作者<input value={author} maxLength={16} onChange={(event) => setAuthor(event.target.value)} /></label><label>原文链接<input value={sourceUrl} type="url" placeholder="可选" onChange={(event) => setSourceUrl(event.target.value)} /></label></div><label>摘要<textarea value={digest} maxLength={128} onChange={(event) => setDigest(event.target.value)} /></label></div><div className="sync-summary"><span><small>目标公众号</small><strong>{accountName}</strong></span><span><small>排版主题</small><strong>{currentTheme.name}</strong></span><span><small>智能审核</small><strong className={audit.score >= 75 ? "ok" : "needs-work"}>{audit.score} 分 · {audit.score >= 75 ? "可发布" : "待优化"}</strong></span></div>{syncError && <div className="form-error">{syncError}</div>}{syncing ? <div className="sync-progress"><i /></div> : <button className="sync-confirm" onClick={startSync}>确认并发送到草稿箱</button>}</> : <div className="sync-success"><span>✓</span><p className="modal-kicker">SYNC COMPLETE</p><h2>已发送到草稿箱</h2><p>草稿 Media ID：{draftMediaId.slice(0, 10)}…<br />请前往微信公众号后台进行最终预览和群发。</p><button className="sync-confirm" onClick={() => { setShowSync(false); setSynced(false); setDraftMediaId(""); }}>完成</button></div>}
     </div></div>}
+    {showAudit && <div className="modal-backdrop"><div className="modal-card audit-modal"><button className="modal-close" onClick={() => setShowAudit(false)}>×</button><p className="modal-kicker">SMART FORMAT REVIEW</p><div className="audit-hero"><span className={audit.score >= 90 ? "excellent" : audit.score >= 75 ? "good" : "weak"}>{audit.score}</span><div><h2>智能格式审核</h2><p>{audit.label} · 已检查标题、摘要、结构、段落、图片和互动引导。</p></div></div>{auditNotice && <div className="audit-notice">✓ {auditNotice}</div>}<div className="audit-list">{audit.issues.length ? audit.issues.map((issue) => <article key={issue.id} className={`audit-issue ${issue.level}`}><span>{issue.level === "error" ? "!" : issue.level === "warning" ? "•" : "i"}</span><div><strong>{issue.title}</strong><p>{issue.detail}</p></div>{issue.fixable && <em>可自动修复</em>}</article>) : <div className="audit-perfect"><span>✓</span><strong>格式状态优秀</strong><p>当前没有发现影响发布和手机阅读的问题。</p></div>}</div><div className="ai-review-note"><span>AI</span><div><strong>AI 内容增强</strong><p>后续配置模型后，可继续生成标题钩子、开场摘要和结尾互动建议；当前审核不会把文章上传给第三方。</p></div><b>待配置</b></div><div className="audit-actions"><button className="secondary-btn" onClick={() => setShowAudit(false)}>返回编辑</button><button className="sync-confirm" disabled={!audit.issues.some((issue) => issue.fixable)} onClick={applyFormatFixes}>一键修复格式问题</button></div></div></div>}
   </div>;
 }
 

@@ -21,10 +21,12 @@ export async function POST(request: Request) {
     const digest = body.digest?.trim() ?? "";
     const content = sanitizeWechatHtml(body.content?.trim() ?? "");
     const thumbMediaId = body.thumbMediaId?.trim() ?? "";
+    const contentSourceUrl = validateSourceUrl(body.contentSourceUrl?.trim() ?? "");
     if (!title || title.length > 32) return Response.json({ ok: false, error: "标题不能为空且不能超过 32 个字符" }, { status: 400 });
     if (author.length > 16) return Response.json({ ok: false, error: "作者名称不能超过 16 个字符" }, { status: 400 });
     if (digest.length > 128) return Response.json({ ok: false, error: "摘要不能超过 128 个字符" }, { status: 400 });
     if (!content || content.length > 20000) return Response.json({ ok: false, error: "正文不能为空且不能超过 20000 个字符" }, { status: 400 });
+    if (new TextEncoder().encode(content).byteLength > 1024 * 1024) return Response.json({ ok: false, error: "正文排版后的数据不能超过 1MB" }, { status: 400 });
     if (!thumbMediaId) return Response.json({ ok: false, error: "请先上传封面图片" }, { status: 400 });
 
     const token = await getAccessToken();
@@ -40,7 +42,7 @@ export async function POST(request: Request) {
             author,
             digest,
             content,
-            content_source_url: body.contentSourceUrl?.trim() ?? "",
+            content_source_url: contentSourceUrl,
             thumb_media_id: thumbMediaId,
             need_open_comment: body.openComment ? 1 : 0,
             only_fans_can_comment: body.fansOnlyComment ? 1 : 0,
@@ -59,5 +61,17 @@ export async function POST(request: Request) {
       // Keep the original WeChat error when history persistence also fails.
     }
     return errorResponse(error);
+  }
+}
+
+function validateSourceUrl(value: string) {
+  if (!value) return "";
+  if (value.length > 1024) throw new WechatApiError(-1006, "原文链接不能超过 1KB");
+  try {
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol)) throw new Error("unsupported protocol");
+    return url.href;
+  } catch {
+    throw new WechatApiError(-1006, "原文链接格式不正确，请填写完整的 http:// 或 https:// 地址");
   }
 }

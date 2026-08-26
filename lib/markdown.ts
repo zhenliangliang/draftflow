@@ -17,10 +17,10 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
     if (depth === 2) return `<h2 style="margin:28px 0 14px;padding-left:12px;border-left:4px solid ${theme.color};color:${theme.color};font-size:21px;line-height:1.5;font-weight:700;">${content}</h2>`;
     return `<h${depth} style="margin:22px 0 10px;color:${theme.color};font-size:${Math.max(15, 20 - depth)}px;line-height:1.5;font-weight:700;">${content}</h${depth}>`;
   };
-  renderer.paragraph = ({ tokens }) => `<p style="margin:0 0 14px;color:#3f4943;font-size:16px;line-height:1.9;text-align:justify;">${inline(tokens)}</p>`;
+  renderer.paragraph = ({ tokens }) => `<p style="margin:0 0 14px;color:#3f4943;font-size:16px;line-height:1.9;text-align:left;letter-spacing:normal;word-break:normal;overflow-wrap:break-word;">${inline(tokens)}</p>`;
   renderer.blockquote = ({ tokens }) => `<blockquote style="margin:18px 0;padding:14px 16px;border-left:3px solid ${theme.color};border-radius:4px;color:#5c6961;background:#edf2ee;font-size:15px;line-height:1.9;">${block(tokens)}</blockquote>`;
   renderer.code = ({ text, lang }) => `<pre style="margin:18px 0;padding:15px 16px;overflow-x:auto;border-radius:6px;color:#e7eee9;background:#16251e;font-size:13px;line-height:1.75;"><code data-language="${escapeHtml(lang || "text")}">${escapeHtml(text)}</code></pre>`;
-  renderer.codespan = ({ text }) => `<code style="margin:0 2px;padding:2px 5px;border-radius:3px;color:#a23f35;background:#f5eeeb;font-family:monospace;font-size:14px;">${escapeHtml(text)}</code>`;
+  renderer.codespan = ({ text }) => `<code style="margin:0 2px;padding:2px 5px;border-radius:3px;color:#a23f35;background:#f5eeeb;font-family:monospace;font-size:14px;letter-spacing:normal;white-space:normal;word-break:break-all;">${escapeHtml(text)}</code>`;
   renderer.hr = () => `<hr style="height:1px;margin:26px 0;border:0;background:#dfe5e1;" />`;
   renderer.strong = ({ tokens }) => `<strong style="color:#243129;font-weight:750;">${inline(tokens)}</strong>`;
   renderer.em = ({ tokens }) => `<em style="color:#5e6d64;font-style:italic;">${inline(tokens)}</em>`;

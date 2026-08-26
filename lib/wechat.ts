@@ -177,10 +177,32 @@ export async function getSyncHistory() {
 
 export async function wechatJson<T extends { errcode?: number; errmsg?: string }>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
-  const data = await response.json<T>();
+  const raw = await response.text();
+  let data: T;
+  try {
+    data = JSON.parse(raw) as T;
+  } catch {
+    throw new WechatApiError(response.status || -1005, "微信接口返回了无法解析的响应，请稍后重试");
+  }
   if (!response.ok) throw new WechatApiError(response.status, `微信接口请求失败（HTTP ${response.status}）`);
   if (typeof data.errcode === "number" && data.errcode !== 0) throw new WechatApiError(data.errcode, data.errmsg);
   return data;
+}
+
+export async function createWechatMediaForm(file: File, prefix: string) {
+  const extensions: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/bmp": "bmp",
+  };
+  const extension = extensions[file.type] ?? "bin";
+  const media = new Blob([await file.arrayBuffer()], { type: file.type || "application/octet-stream" });
+  const upload = new FormData();
+  // Use a short ASCII filename to avoid multipart parsing failures caused by
+  // long CJK filenames in some Worker and WeChat gateway combinations.
+  upload.append("media", media, `${prefix}.${extension}`);
+  return upload;
 }
 
 export function assertSameOrigin(request: Request) {
@@ -201,7 +223,10 @@ export function errorResponse(error: unknown) {
   if (error instanceof WechatApiError) {
     return Response.json({ ok: false, error: error.message, code: error.code }, { status: error.code === -1001 ? 409 : 400 });
   }
-  const message = error instanceof Error ? error.message : "服务器处理失败";
+  const rawMessage = error instanceof Error ? error.message : "服务器处理失败";
+  const message = /did not match the expected pattern/i.test(rawMessage)
+    ? "文件或链接格式无法解析，请重新选择后再试"
+    : rawMessage;
   return Response.json({ ok: false, error: message }, { status: 500 });
 }
 
@@ -268,6 +293,7 @@ function wechatErrorMessage(code: number, fallback?: string) {
     40125: "AppSecret 无效，可能已被重置",
     40001: "接口凭证无效或已过期",
     40007: "封面素材无效，请重新上传",
+    40006: "图片大小或格式不符合微信要求",
     41005: "缺少上传文件",
     45009: "微信接口调用次数已达到上限",
     45028: "草稿数量已达到上限，请先清理公众号草稿箱",
