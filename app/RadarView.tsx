@@ -6,7 +6,8 @@ import type { ImportedMarkdownDraft } from "./ProductViews";
 type Source = { id: string; name: string; source_type: "wechat" | "rss"; source_url?: string; enabled: number };
 type Article = { id: string; source_name: string; title: string; url: string; digest: string; published_at: string | null; read_count: number; like_count: number; hot_score: number };
 type Recommendation = { id: string; title: string; angle: string; audience: string; outline: string[]; keywords: string[]; predicted_score: number };
-type AIStatus = { configured: boolean; provider: string; baseUrl: string; model: string; apiKeyMasked: string; updatedAt: string | null };
+type AIProvider = "openai" | "litellm";
+type AIStatus = { configured: boolean; provider: AIProvider; baseUrl: string; model: string; apiKeyMasked: string; updatedAt: string | null };
 
 async function readApi<T>(response: Response): Promise<T> {
   const data = await response.json() as T & { error?: string };
@@ -45,9 +46,12 @@ export function RadarView({ onUseDraft }: { onUseDraft: (draft: ImportedMarkdown
   const [readCount, setReadCount] = useState("");
   const [likeCount, setLikeCount] = useState("");
   const [saving, setSaving] = useState(false);
+  const [aiProvider, setAIProvider] = useState<AIProvider>("openai");
   const [aiBaseUrl, setAIBaseUrl] = useState("https://api.openai.com/v1");
   const [aiModel, setAIModel] = useState("gpt-5.6-luna");
   const [aiApiKey, setAIApiKey] = useState("");
+  const [aiModels, setAIModels] = useState<string[]>([]);
+  const [aiModelsLoading, setAIModelsLoading] = useState(false);
   const [aiSaving, setAISaving] = useState(false);
   const [aiConfigError, setAIConfigError] = useState("");
   const averageHeat = useMemo(() => articles.length ? Math.round(articles.reduce((total, item) => total + item.hot_score, 0) / articles.length) : 0, [articles]);
@@ -95,11 +99,27 @@ export function RadarView({ onUseDraft }: { onUseDraft: (draft: ImportedMarkdown
   }
 
   function openAIConfig() {
+    setAIProvider(ai.provider || "openai");
     setAIBaseUrl(ai.baseUrl || "https://api.openai.com/v1");
     setAIModel(ai.model || "gpt-5.6-luna");
     setAIApiKey("");
+    setAIModels([]);
     setAIConfigError("");
     setShowAIConfig(true);
+  }
+
+  async function loadAIModels() {
+    setAIModelsLoading(true); setAIConfigError("");
+    try {
+      const result = await readApi<{ models: string[] }>(await fetch("/api/ai/models", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: aiProvider, baseUrl: aiBaseUrl, apiKey: aiApiKey }),
+      }));
+      setAIModels(result.models);
+      if (!result.models.includes(aiModel)) setAIModel(result.models[0] || "");
+    } catch (reason) { setAIConfigError(reason instanceof Error ? reason.message : "模型列表获取失败"); }
+    finally { setAIModelsLoading(false); }
   }
 
   async function saveAI(event: React.FormEvent) {
@@ -108,7 +128,7 @@ export function RadarView({ onUseDraft }: { onUseDraft: (draft: ImportedMarkdown
       const result = await readApi<{ ai: AIStatus }>(await fetch("/api/ai/config", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ provider: "openai", baseUrl: aiBaseUrl, model: aiModel, apiKey: aiApiKey }),
+        body: JSON.stringify({ provider: aiProvider, baseUrl: aiBaseUrl, model: aiModel, apiKey: aiApiKey }),
       }));
       setAI(result.ai); setAIApiKey(""); setShowAIConfig(false); setNotice("AI 已通过连接验证并加密保存");
     } catch (reason) { setAIConfigError(reason instanceof Error ? reason.message : "AI 配置保存失败"); }
@@ -146,6 +166,18 @@ export function RadarView({ onUseDraft }: { onUseDraft: (draft: ImportedMarkdown
     <section className="radar-recommendations"><div className="radar-section-head"><div><h2>推荐选题</h2><p>基于共同主题和读者需求生成，不复制原文表达。</p></div><span>{recommendations.length} 个创作机会</span></div>{recommendations.length ? <div className="recommendation-grid">{recommendations.map((item) => <article className="recommendation-card" key={item.id}><div className="recommendation-top"><span>预测热度 {item.predicted_score}</span><small>{item.audience}</small></div><h3>{item.title}</h3><p>{item.angle}</p><div className="keyword-row">{item.keywords.slice(0, 4).map((keyword) => <i key={keyword}>#{keyword}</i>)}</div><ol>{item.outline.slice(0, 4).map((line) => <li key={line}>{line}</li>)}</ol><button onClick={() => void generate(item)} disabled={generating === item.id}>{generating === item.id ? "正在生成原创草稿…" : ai.configured ? "用 AI 生成原创草稿 →" : "生成写作提纲 →"}</button></article>)}</div> : <div className="panel radar-empty-recommendation">选择热门文章并点击“分析”，系统会生成原创选题和文章提纲。</div>}</section>
     {showSource && <div className="modal-backdrop"><form className="modal-card connect-modal" onSubmit={addSource}><button type="button" className="modal-close" onClick={() => setShowSource(false)}>×</button><p className="modal-kicker">SUBSCRIBE SOURCE</p><h2>订阅内容源</h2><p>添加公众号用于分类文章，或添加你有权访问的 RSS 地址。</p><label>名称<input value={sourceName} onChange={(event) => setSourceName(event.target.value)} placeholder="例如：技术领导力" required /></label><label>来源类型<select value={sourceType} onChange={(event) => setSourceType(event.target.value as "wechat" | "rss")}><option value="wechat">微信公众号</option><option value="rss">RSS / 授权数据源</option></select></label>{sourceType === "rss" && <label>RSS 地址<input value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} type="url" placeholder="https://example.com/feed.xml" required /></label>}<div className="form-note">公众号订阅用于内容分类；文章通过公开链接导入，不抓取登录态或绕过平台限制。</div><button className="sync-confirm" disabled={saving}>{saving ? "正在添加…" : "确认订阅"}</button></form></div>}
     {showImport && <div className="modal-backdrop"><form className="modal-card connect-modal" onSubmit={importArticle}><button type="button" className="modal-close" onClick={() => setShowImport(false)}>×</button><p className="modal-kicker">IMPORT PUBLIC ARTICLE</p><h2>导入公众号文章</h2><p>系统只读取公开页面，用于主题与结构分析。</p><label>文章链接<input value={articleUrl} onChange={(event) => setArticleUrl(event.target.value)} type="url" placeholder="https://mp.weixin.qq.com/s/..." required /></label><label>归属订阅源<select value={articleSource} onChange={(event) => setArticleSource(event.target.value)}><option value="">自动识别</option>{sources.filter((source) => source.source_type === "wechat").map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label><div className="radar-number-fields"><label>阅读量（可选）<input value={readCount} onChange={(event) => setReadCount(event.target.value)} type="number" min="0" placeholder="用于热度校准" /></label><label>点赞量（可选）<input value={likeCount} onChange={(event) => setLikeCount(event.target.value)} type="number" min="0" placeholder="用于热度校准" /></label></div><div className="form-note">热度分为预测值；如填写公开可见的阅读和点赞数据，评分会更准确。</div><button className="sync-confirm" disabled={saving}>{saving ? "正在读取文章…" : "导入并分析基础信息"}</button></form></div>}
-    {showAIConfig && <div className="modal-backdrop"><form className="modal-card connect-modal ai-config-modal" onSubmit={saveAI}><button type="button" className="modal-close" onClick={() => setShowAIConfig(false)}>×</button><p className="modal-kicker">AI CONNECTION</p><h2>{ai.configured ? "管理 AI 配置" : "连接 AI 模型"}</h2><p>直接在这里完成配置。保存前会验证 API Key 与模型是否可用。</p><label>接口地址<input value={aiBaseUrl} onChange={(event) => setAIBaseUrl(event.target.value)} type="url" placeholder="https://api.openai.com/v1" required /></label><label>模型名称<input value={aiModel} onChange={(event) => setAIModel(event.target.value)} placeholder="gpt-5.6-luna" required /></label><label>API Key<input value={aiApiKey} onChange={(event) => setAIApiKey(event.target.value)} type="password" autoComplete="new-password" placeholder={ai.configured ? "已保存；留空表示继续使用原密钥" : "sk-..."} required={!ai.configured} /></label><div className="form-note ai-security-note"><strong>安全存储</strong><span>密钥仅发送到服务端验证，使用 AES-256-GCM 加密后写入数据库；页面不会读取或显示原密钥。</span></div>{aiConfigError && <div className="page-error ai-config-error">{aiConfigError}</div>}<button className="sync-confirm" disabled={aiSaving}>{aiSaving ? "正在验证连接…" : "验证并加密保存"}</button></form></div>}
+    {showAIConfig && <div className="modal-backdrop"><form className="modal-card connect-modal ai-config-modal" onSubmit={saveAI}>
+      <button type="button" className="modal-close" onClick={() => setShowAIConfig(false)}>×</button>
+      <p className="modal-kicker">AI CONNECTION</p><h2>{ai.configured ? "管理 AI 配置" : "连接 AI 模型"}</h2>
+      <p>支持 OpenAI 与 LiteLLM 网关。先获取当前密钥可用的模型，再选择并保存。</p>
+      <label>服务类型<select value={aiProvider} onChange={(event) => { const provider = event.target.value as AIProvider; setAIProvider(provider); setAIModels([]); if (provider === "openai" && !aiBaseUrl) setAIBaseUrl("https://api.openai.com/v1"); }}><option value="openai">OpenAI</option><option value="litellm">LiteLLM 网关</option></select></label>
+      <label>接口地址<input value={aiBaseUrl} onChange={(event) => { setAIBaseUrl(event.target.value); setAIModels([]); }} type="url" placeholder={aiProvider === "litellm" ? "https://llm-gateway.example.com" : "https://api.openai.com/v1"} required /><small>{aiProvider === "litellm" ? "可填写网关根地址，系统会自动补全 /v1。" : "OpenAI 官方接口地址默认已包含 /v1。"}</small></label>
+      <label>API Key<input value={aiApiKey} onChange={(event) => { setAIApiKey(event.target.value); setAIModels([]); }} type="password" autoComplete="new-password" placeholder={ai.configured ? "已保存；留空表示继续使用原密钥" : "sk-..."} required={!ai.configured} /></label>
+      <div className="ai-model-picker"><div><strong>可用模型</strong><small>{aiModels.length ? `已获取 ${aiModels.length} 个模型` : "从网关读取当前密钥有权访问的模型"}</small></div><button type="button" className="secondary-btn" onClick={() => void loadAIModels()} disabled={aiModelsLoading}>{aiModelsLoading ? "获取中…" : "获取模型列表"}</button></div>
+      {aiModels.length ? <label>选择模型<select value={aiModel} onChange={(event) => setAIModel(event.target.value)} required>{aiModels.map((model) => <option key={model} value={model}>{model}</option>)}</select></label> : <label>模型名称<input value={aiModel} onChange={(event) => setAIModel(event.target.value)} placeholder="请先获取模型列表，也可手动填写" required /></label>}
+      <div className="form-note ai-security-note"><strong>安全存储</strong><span>密钥仅发送到服务端验证，使用 AES-256-GCM 加密后写入数据库；页面不会读取或显示原密钥。</span></div>
+      {aiConfigError && <div className="page-error ai-config-error">{aiConfigError}</div>}
+      <button className="sync-confirm" disabled={aiSaving || aiModelsLoading}>{aiSaving ? "正在验证连接…" : "验证并加密保存"}</button>
+    </form></div>}
   </div>;
 }

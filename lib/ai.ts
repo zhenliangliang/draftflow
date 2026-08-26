@@ -4,6 +4,8 @@ const AI_SETTING_ID = "default";
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_MODEL = "gpt-5.6-luna";
 
+type AIProvider = "openai" | "litellm";
+
 type AISettingsRow = {
   provider: string;
   base_url: string;
@@ -20,9 +22,23 @@ type AIConfigInput = {
   apiKey?: string;
 };
 
+type ModelListInput = {
+  provider?: string;
+  baseUrl: string;
+  apiKey?: string;
+};
+
+type StructuredInput = {
+  instructions: string;
+  prompt: string;
+  schemaName: string;
+  schema: Record<string, unknown>;
+  maxOutputTokens?: number;
+};
+
 export type SafeAIStatus = {
   configured: boolean;
-  provider: string;
+  provider: AIProvider;
   baseUrl: string;
   model: string;
   apiKeyMasked: string;
@@ -57,7 +73,7 @@ export async function getAIStatus(): Promise<SafeAIStatus> {
   }
   return {
     configured: true,
-    provider: row.provider,
+    provider: normalizeProvider(row.provider),
     baseUrl: row.base_url,
     model: row.model,
     apiKeyMasked: "sk-••••••••••••",
@@ -65,21 +81,43 @@ export async function getAIStatus(): Promise<SafeAIStatus> {
   };
 }
 
+export async function listAIModels(input: ModelListInput) {
+  await ensureAISettingsSchema();
+  const baseUrl = validateBaseUrl(input.baseUrl || DEFAULT_BASE_URL);
+  const apiKey = await resolveApiKey(input.apiKey);
+  const response = await fetch(buildAIUrl(baseUrl, "models"), {
+    method: "GET",
+    headers: { authorization: `Bearer ${apiKey}` },
+  });
+  const data = await parseJsonResponse(response, "模型列表");
+  if (!response.ok) throwModelListError(response.status, data);
+  const rows = Array.isArray(data.data) ? data.data : [];
+  const models = [...new Set(rows.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const id = (item as { id?: unknown }).id;
+    return typeof id === "string" && id.trim() ? [id.trim()] : [];
+  }))].sort((a, b) => a.localeCompare(b));
+  if (!models.length) throw new WechatApiError(-1211, "网关已连接，但没有返回当前密钥可用的模型");
+  return { provider: normalizeProvider(input.provider), baseUrl, models };
+}
+
 export async function saveAIConfig(input: AIConfigInput) {
   await ensureAISettingsSchema();
   const { DB } = getRuntimeEnv();
   const baseUrl = validateBaseUrl(input.baseUrl || DEFAULT_BASE_URL);
   const model = input.model.trim();
-  const provider = input.provider?.trim() || "openai";
-  if (!model || model.length > 120) throw new WechatApiError(-1206, "请填写有效的模型名称");
+  const provider = normalizeProvider(input.provider);
+  if (!model || model.length > 160) throw new WechatApiError(-1206, "请选择或填写有效的模型名称");
   if (!/^[a-z0-9._:/-]+$/i.test(model)) throw new WechatApiError(-1206, "模型名称包含不支持的字符");
 
   const existing = await getSettingsRow();
   const submittedKey = input.apiKey?.trim() ?? "";
-  if (!submittedKey && !existing) throw new WechatApiError(-1207, "请填写 API Key");
-  const apiKey = submittedKey || await decryptSecret(existing!.api_key_ciphertext, existing!.api_key_iv);
+  const apiKey = await resolveApiKey(submittedKey);
+  const { models } = await listAIModels({ provider, baseUrl, apiKey });
+  if (!models.includes(model)) {
+    throw new WechatApiError(-1209, `当前密钥的模型列表中没有 ${model}，请重新获取并选择`);
+  }
 
-  await verifyAIConnection({ baseUrl, model, apiKey });
   const encrypted = submittedKey
     ? await encryptSecret(submittedKey)
     : { ciphertext: existing!.api_key_ciphertext, iv: existing!.api_key_iv };
@@ -103,57 +141,89 @@ export async function saveAIConfig(input: AIConfigInput) {
   return getAIStatus();
 }
 
-export async function verifyAIConnection(input: { baseUrl: string; model: string; apiKey: string }) {
-  const response = await fetch(`${input.baseUrl}/models/${encodeURIComponent(input.model)}`, {
-    method: "GET",
-    headers: { authorization: `Bearer ${input.apiKey}` },
-  });
-  if (response.ok) return;
-  const raw = await response.text();
-  let message = "";
-  try { message = (JSON.parse(raw) as { error?: { message?: string } }).error?.message ?? ""; } catch { /* use fallback */ }
-  if (response.status === 401) throw new WechatApiError(-1208, "API Key 验证失败，请检查后重试");
-  if (response.status === 404) throw new WechatApiError(-1209, `未找到模型 ${input.model}，请检查模型名称`);
-  throw new WechatApiError(-1210, message || `AI 服务连接失败（HTTP ${response.status}）`);
-}
-
-export async function generateStructured<T>(input: { instructions: string; prompt: string; schemaName: string; schema: Record<string, unknown>; maxOutputTokens?: number }): Promise<T> {
+export async function generateStructured<T>(input: StructuredInput): Promise<T> {
   await ensureAISettingsSchema();
   const row = await getSettingsRow();
   if (!row) throw new WechatApiError(-1200, "AI 模型尚未在页面中配置");
   const apiKey = await decryptSecret(row.api_key_ciphertext, row.api_key_iv);
   const baseUrl = validateBaseUrl(row.base_url);
-  const response = await fetch(`${baseUrl}/responses`, {
+  const outputText = normalizeProvider(row.provider) === "litellm"
+    ? await generateViaChatCompletions({ row, baseUrl, apiKey, input })
+    : await generateViaResponses({ row, baseUrl, apiKey, input });
+  try { return JSON.parse(stripCodeFence(outputText)) as T; }
+  catch { throw new WechatApiError(-1203, "AI 分析结果格式不完整，请重新生成"); }
+}
+
+async function generateViaResponses(input: { row: AISettingsRow; baseUrl: string; apiKey: string; input: StructuredInput }) {
+  const response = await fetch(buildAIUrl(input.baseUrl, "responses"), {
     method: "POST",
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-      "content-type": "application/json",
-    },
+    headers: authJsonHeaders(input.apiKey),
     body: JSON.stringify({
-      model: row.model,
-      instructions: input.instructions,
-      input: input.prompt,
+      model: input.row.model,
+      instructions: input.input.instructions,
+      input: input.input.prompt,
       store: false,
-      max_output_tokens: input.maxOutputTokens ?? 3000,
+      max_output_tokens: input.input.maxOutputTokens ?? 3000,
       text: {
         format: {
           type: "json_schema",
-          name: input.schemaName,
+          name: input.input.schemaName,
           strict: true,
-          schema: input.schema,
+          schema: input.input.schema,
         },
       },
     }),
   });
-  const raw = await response.text();
-  let data: Record<string, unknown>;
-  try { data = JSON.parse(raw) as Record<string, unknown>; } catch { throw new WechatApiError(-1201, "AI 服务返回了无法解析的响应"); }
-  if (!response.ok) {
-    const error = data.error as { message?: string } | undefined;
-    throw new WechatApiError(-1202, error?.message || `AI 服务请求失败（HTTP ${response.status}）`);
+  const data = await parseJsonResponse(response, "AI 服务");
+  if (!response.ok) throwServiceError(response.status, data);
+  return extractResponseOutputText(data);
+}
+
+async function generateViaChatCompletions(input: { row: AISettingsRow; baseUrl: string; apiKey: string; input: StructuredInput }) {
+  const requestBody: Record<string, unknown> = {
+    model: input.row.model,
+    messages: [
+      { role: "system", content: `${input.input.instructions}\n你必须只输出一个符合指定 JSON Schema 的 JSON 对象，不要输出 Markdown 代码围栏。` },
+      { role: "user", content: `${input.input.prompt}\n\nJSON Schema：\n${JSON.stringify(input.input.schema)}` },
+    ],
+    max_tokens: input.input.maxOutputTokens ?? 3000,
+    response_format: { type: "json_object" },
+  };
+  let response = await fetch(buildAIUrl(input.baseUrl, "chat/completions"), {
+    method: "POST",
+    headers: authJsonHeaders(input.apiKey),
+    body: JSON.stringify(requestBody),
+  });
+  // Some LiteLLM upstream models do not accept response_format. Retry once
+  // without it while retaining the explicit schema in the prompt.
+  if (response.status === 400) {
+    delete requestBody.response_format;
+    response = await fetch(buildAIUrl(input.baseUrl, "chat/completions"), {
+      method: "POST",
+      headers: authJsonHeaders(input.apiKey),
+      body: JSON.stringify(requestBody),
+    });
   }
-  const outputText = extractOutputText(data);
-  try { return JSON.parse(outputText) as T; } catch { throw new WechatApiError(-1203, "AI 分析结果格式不完整，请重新生成"); }
+  const data = await parseJsonResponse(response, "LiteLLM 网关");
+  if (!response.ok) throwServiceError(response.status, data);
+  const choices = Array.isArray(data.choices) ? data.choices : [];
+  const message = choices[0] && typeof choices[0] === "object"
+    ? (choices[0] as { message?: { content?: unknown } }).message
+    : undefined;
+  if (typeof message?.content === "string") return message.content;
+  if (Array.isArray(message?.content)) {
+    const text = message.content.flatMap((part) => part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string" ? [(part as { text: string }).text] : []).join("");
+    if (text) return text;
+  }
+  throw new WechatApiError(-1204, "LiteLLM 网关没有返回文本结果");
+}
+
+async function resolveApiKey(submitted?: string) {
+  const value = submitted?.trim() ?? "";
+  if (value) return value;
+  const existing = await getSettingsRow();
+  if (!existing) throw new WechatApiError(-1207, "请填写 API Key");
+  return decryptSecret(existing.api_key_ciphertext, existing.api_key_iv);
 }
 
 async function getSettingsRow() {
@@ -162,7 +232,49 @@ async function getSettingsRow() {
     .bind(AI_SETTING_ID).first<AISettingsRow>();
 }
 
-function extractOutputText(data: Record<string, unknown>) {
+function buildAIUrl(baseUrl: string, resource: string) {
+  const url = new URL(validateBaseUrl(baseUrl));
+  const basePath = url.pathname.replace(/\/+$/, "");
+  const versionedPath = /\/v1$/i.test(basePath) ? basePath : `${basePath}/v1`;
+  url.pathname = `${versionedPath}/${resource.replace(/^\/+/, "")}`.replace(/\/{2,}/g, "/");
+  url.search = "";
+  url.hash = "";
+  return url.href;
+}
+
+function authJsonHeaders(apiKey: string) {
+  return { authorization: `Bearer ${apiKey}`, "content-type": "application/json" };
+}
+
+async function parseJsonResponse(response: Response, serviceName: string) {
+  const raw = await response.text();
+  try { return JSON.parse(raw) as Record<string, unknown>; }
+  catch { throw new WechatApiError(-1201, `${serviceName}返回了无法解析的响应`); }
+}
+
+function throwModelListError(status: number, data: Record<string, unknown>): never {
+  const message = readErrorMessage(data);
+  if (status === 401) throw new WechatApiError(-1208, "API Key 验证失败，请检查后重试");
+  if (status === 403) throw new WechatApiError(-1212, "网关拒绝读取模型列表（HTTP 403），请确认 LiteLLM Virtual Key 具有模型访问权限");
+  if (status === 404) throw new WechatApiError(-1213, "没有找到 /v1/models 接口，请确认填写的是 OpenAI 或 LiteLLM 网关地址");
+  throw new WechatApiError(-1210, message || `模型列表获取失败（HTTP ${status}）`);
+}
+
+function throwServiceError(status: number, data: Record<string, unknown>): never {
+  const message = readErrorMessage(data);
+  if (status === 401 || status === 403) throw new WechatApiError(-1208, message || "AI 网关鉴权失败，请检查密钥与模型权限");
+  throw new WechatApiError(-1202, message || `AI 服务请求失败（HTTP ${status}）`);
+}
+
+function readErrorMessage(data: Record<string, unknown>) {
+  const error = data.error;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object" && typeof (error as { message?: unknown }).message === "string") return (error as { message: string }).message;
+  if (typeof data.detail === "string") return data.detail;
+  return "";
+}
+
+function extractResponseOutputText(data: Record<string, unknown>) {
   if (typeof data.output_text === "string") return data.output_text;
   const output = Array.isArray(data.output) ? data.output : [];
   for (const item of output) {
@@ -177,12 +289,20 @@ function extractOutputText(data: Record<string, unknown>) {
   throw new WechatApiError(-1204, "AI 服务没有返回文本结果");
 }
 
+function stripCodeFence(value: string) {
+  return value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+}
+
+function normalizeProvider(value?: string): AIProvider {
+  return value === "litellm" ? "litellm" : "openai";
+}
+
 function validateBaseUrl(value: string) {
   try {
     const url = new URL(value.trim().replace(/\/$/, ""));
     const isLocal = ["localhost", "127.0.0.1"].includes(url.hostname);
     if (url.protocol !== "https:" && !(isLocal && url.protocol === "http:")) throw new Error("insecure base URL");
-    if (url.username || url.password) throw new Error("credentials in URL");
+    if (url.username || url.password || url.search || url.hash) throw new Error("unsupported URL parts");
     return url.href.replace(/\/$/, "");
   } catch {
     throw new WechatApiError(-1205, "AI 接口地址格式不正确，公网地址必须使用 HTTPS");
