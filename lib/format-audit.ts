@@ -26,7 +26,7 @@ export function auditArticle(input: { title: string; content: string; digest: st
   const localImages = Array.from(content.matchAll(/!\[[^\]]*]\(([^)]+)\)/g)).filter((match) => !/^https?:\/\//i.test(match[1].trim()));
 
   if (!title.trim()) add({ id: "title-empty", level: "error", title: "缺少文章标题", detail: "标题是草稿箱必填项，也决定用户是否愿意点开。", fixable: false });
-  else if (title.trim().length > 32) add({ id: "title-long", level: "error", title: "标题超过 32 个字符", detail: "微信公众号接口会拒绝过长标题，请精简核心信息。", fixable: false });
+  else if (title.trim().length > 32) add({ id: "title-long", level: "error", title: "标题超过 32 个字符", detail: "微信公众号接口会拒绝过长标题，可自动保留核心标题并精简到限制以内。", fixable: true });
   else if (title.trim().length < 8) add({ id: "title-short", level: "tip", title: "标题信息量偏少", detail: "建议补充对象、收益或差异点，让标题更具体。", fixable: false });
 
   if (!digest.trim()) add({ id: "digest-empty", level: "warning", title: "缺少摘要", detail: "建议用 40–90 字说明文章价值，提升分享卡片的吸引力。", fixable: false });
@@ -37,7 +37,7 @@ export function auditArticle(input: { title: string; content: string; digest: st
     add({ id: "structure", level: "warning", title: "长文缺少二级标题", detail: "建议每 300–500 字设置一个小节，方便手机端快速扫读。", fixable: false });
   }
   if (headings.some((level, index) => index > 0 && level - headings[index - 1] > 1)) {
-    add({ id: "heading-jump", level: "warning", title: "标题层级存在跳级", detail: "请按 H2 → H3 的顺序组织结构，避免直接从 H2 跳到 H4。", fixable: false });
+    add({ id: "heading-jump", level: "warning", title: "标题层级存在跳级", detail: "请按 H2 → H3 的顺序组织结构，避免直接从 H2 跳到 H4。", fixable: true });
   }
 
   const longParagraphs = paragraphs.filter((paragraph) => paragraph.length > 220).length;
@@ -66,6 +66,7 @@ export function autoFixMarkdown(source: string) {
   const lines = source.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").split("\n");
   const output: string[] = [];
   let inFence = false;
+  let previousHeadingLevel = 0;
 
   for (const original of lines) {
     if (/^\s*```/.test(original)) {
@@ -89,6 +90,16 @@ export function autoFixMarkdown(source: string) {
       .join("");
     line = `${prefix}${line}`.trimEnd();
 
+    const heading = line.match(/^(\s*)(#{1,6})\s+(.+)$/);
+    if (heading) {
+      const originalLevel = heading[2].length;
+      const level = previousHeadingLevel === 0
+        ? Math.min(originalLevel, 2)
+        : Math.min(originalLevel, previousHeadingLevel + 1);
+      line = `${heading[1]}${"#".repeat(level)} ${heading[3].trim()}`;
+      previousHeadingLevel = level;
+    }
+
     const needsAir = /^(#{1,6})\s+/.test(line);
     if (needsAir && output.length && output.at(-1) !== "") output.push("");
     if (line && output.length && /^(#{1,6})\s+/.test(output.at(-1) ?? "")) output.push("");
@@ -107,4 +118,20 @@ export function normalizeEditorialText(value: string) {
     .replace(/([A-Za-z0-9])([\u3400-\u9fff])/gu, "$1 $2")
     .replace(/\s+([，。！？；：、])/g, "$1")
     .trim();
+}
+
+export function autoFixTitle(value: string, maxLength = 32) {
+  const normalized = normalizeEditorialText(value);
+  const characters = Array.from(normalized);
+  if (characters.length <= maxLength) return normalized;
+
+  for (const separator of ["｜", "|", "：", ":", "——", "—"]) {
+    const index = normalized.indexOf(separator);
+    if (index < 0) continue;
+    const mainTitle = normalized.slice(0, index).trim();
+    const mainCharacters = Array.from(mainTitle);
+    if (mainCharacters.length >= 8 && mainCharacters.length <= maxLength) return mainTitle;
+  }
+
+  return `${characters.slice(0, Math.max(1, maxLength - 1)).join("")}…`;
 }
