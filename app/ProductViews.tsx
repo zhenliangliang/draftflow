@@ -146,6 +146,7 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
   const [digest, setDigest] = useState(importedDraft?.digest || "公众号内容工作台如何把创作、排版和草稿同步连成一条完整工作流。");
   const [sourceUrl, setSourceUrl] = useState("");
   const [cover, setCover] = useState<File | null>(null);
+  const [coverMediaId, setCoverMediaId] = useState("");
   const [coverNote, setCoverNote] = useState("");
   const [syncError, setSyncError] = useState("");
   const [draftMediaId, setDraftMediaId] = useState("");
@@ -193,15 +194,23 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
       setSyncError("封面图片超过 2MB，请压缩后重新选择");
       return;
     }
+    if (!renderedHtml.trim() || renderedHtml.length >= 20_000) {
+      setSyncError(`排版后正文为 ${renderedHtml.length.toLocaleString("zh-CN")} 个字符，微信要求少于 20,000 个字符；请精简正文或拆分为两篇文章`);
+      return;
+    }
     setSyncing(true);
     try {
-      let coverResult: { mediaId: string };
-      try {
-        const coverBody = new FormData();
-        coverBody.append("cover", cover, cover.name);
-        coverResult = await readApi<{ mediaId: string }>(await fetch("/api/wechat/cover", { method: "POST", body: coverBody }));
-      } catch (error) {
-        throw new Error(`封面上传失败：${error instanceof Error ? error.message : "请重新选择图片"}`);
+      let thumbMediaId = coverMediaId;
+      if (!thumbMediaId) {
+        try {
+          const coverBody = new FormData();
+          coverBody.append("cover", cover, cover.name);
+          const coverResult = await readApi<{ mediaId: string }>(await fetch("/api/wechat/cover", { method: "POST", body: coverBody }));
+          thumbMediaId = coverResult.mediaId;
+          setCoverMediaId(thumbMediaId);
+        } catch (error) {
+          throw new Error(`封面上传失败：${error instanceof Error ? error.message : "请重新选择图片"}`);
+        }
       }
 
       let draftResult: { mediaId: string };
@@ -215,7 +224,7 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
             digest,
             content: renderedHtml,
             contentSourceUrl: sourceUrl,
-            thumbMediaId: coverResult.mediaId,
+            thumbMediaId,
             openComment: false,
             fansOnlyComment: false,
           }),
@@ -244,16 +253,19 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
     setCoverNote("");
     if (!file) {
       setCover(null);
+      setCoverMediaId("");
       return;
     }
     try {
       const optimized = await optimizeCoverImage(file);
       setCover(optimized);
+      setCoverMediaId("");
       setCoverNote(optimized !== file
         ? `已自动优化为 ${Math.round(optimized.size / 1024)}KB，可安全上传`
         : `${Math.round(optimized.size / 1024)}KB，已通过上传检查`);
     } catch (error) {
       setCover(null);
+      setCoverMediaId("");
       setSyncError(error instanceof Error ? error.message : "封面图片处理失败");
     }
   }

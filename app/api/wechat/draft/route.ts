@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     if (!title || title.length > 32) return Response.json({ ok: false, error: "标题不能为空且不能超过 32 个字符" }, { status: 400 });
     if (author.length > 16) return Response.json({ ok: false, error: "作者名称不能超过 16 个字符" }, { status: 400 });
     if (digest.length > 128) return Response.json({ ok: false, error: "摘要不能超过 128 个字符" }, { status: 400 });
-    if (!content || content.length > 20000) return Response.json({ ok: false, error: "正文不能为空且不能超过 20000 个字符" }, { status: 400 });
+    if (!content || content.length >= 20_000) return Response.json({ ok: false, error: "正文不能为空且必须少于 20000 个字符" }, { status: 400 });
     if (new TextEncoder().encode(content).byteLength > 1024 * 1024) return Response.json({ ok: false, error: "正文排版后的数据不能超过 1MB" }, { status: 400 });
     if (!thumbMediaId) return Response.json({ ok: false, error: "请先上传封面图片" }, { status: 400 });
 

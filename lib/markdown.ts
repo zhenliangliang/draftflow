@@ -56,7 +56,47 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
 
   const normalized = source.replace(/^(?:\u200B|\u200C|\u200D|\u200E|\u200F|\uFEFF)/u, "");
   const html = marked.parse(normalized, { renderer, gfm: true, breaks: false, async: false }) as string;
-  return `<section style="padding:4px 0;background:${theme.bg};">${html}</section>`;
+  const richHtml = `<section style="padding:4px 0;background:${theme.bg};">${html}</section>`;
+  if (richHtml.length < 19_500) return richHtml;
+
+  const compactHtml = compactWechatHtml(richHtml, theme);
+  if (compactHtml.length < 19_500) return compactHtml;
+
+  // Extremely long source documents still keep all text and semantic tags.
+  // Only decorative inline styles are removed as a final attempt to satisfy
+  // WeChat's strict 20,000-character HTML limit.
+  return compactHtml.replace(/\sstyle="[^"]*"/gi, "");
+}
+
+function compactWechatHtml(html: string, theme: MarkdownTheme) {
+  const styles: Record<string, string> = {
+    h1: "font-size:24px",
+    h2: `padding-left:8px;border-left:3px solid ${theme.color};color:${theme.color}`,
+    h3: `color:${theme.color}`,
+    h4: `color:${theme.color}`,
+    h5: `color:${theme.color}`,
+    h6: `color:${theme.color}`,
+    p: "line-height:1.8",
+    blockquote: `padding:10px;border-left:3px solid ${theme.color};background:#edf2ee`,
+    pre: "padding:10px;overflow:auto;background:#16251e;color:#fff",
+    code: "word-break:break-all",
+    hr: "border:0;border-top:1px solid #ddd",
+    table: "width:100%;border-collapse:collapse;font-size:12px",
+    a: `color:${theme.color}`,
+    img: "width:100%;height:auto",
+    ul: "padding-left:20px",
+    ol: "padding-left:20px",
+  };
+
+  return html
+    .replace(/<([a-z0-9]+)([^>]*) style="([^"]*)"/gi, (_full, rawTag: string, attributes: string, originalStyle: string) => {
+      const tag = rawTag.toLowerCase();
+      const style = tag === "section" && originalStyle.includes("background:")
+        ? `background:${theme.bg}`
+        : styles[tag];
+      return `<${rawTag}${attributes}${style ? ` style="${style}"` : ""}`;
+    })
+    .replace(/<table style=/gi, '<table border="1" cellpadding="4" style=');
 }
 
 export function findLocalMarkdownImages(source: string) {
