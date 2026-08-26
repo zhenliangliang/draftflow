@@ -7,5 +7,13 @@ export const metadata: Metadata = {
 };
 
 export default function Home() {
-  return <DraftFlowApp />;
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "long",
+    day: "numeric",
+    weekday: "long",
+  }).formatToParts(new Date());
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+  const today = `${value("month")}${value("day")} ${value("weekday")}`;
+  return <DraftFlowApp today={today} />;
 }

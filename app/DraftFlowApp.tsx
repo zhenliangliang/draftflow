@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { ProductView, type ProductViewKey } from "./ProductViews";
 
 type NavKey = "dashboard" | "content" | "editor" | "themes" | "account";
@@ -31,12 +31,10 @@ function Icon({ name }: { name: NavKey }) {
   return <svg className="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{icons[name]}</svg>;
 }
 
-export function DraftFlowApp() {
+export function DraftFlowApp({ today }: { today: string }) {
   const [active, setActive] = useState<NavKey>("dashboard");
   const [toast, setToast] = useState("");
   const [wechatAccount, setWechatAccount] = useState<{ name: string } | null>(null);
-  const today = useMemo(() => new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "long" }).format(new Date()), []);
-
   useEffect(() => {
     fetch("/api/wechat/config")
       .then((response) => response.ok ? response.json() : null)
