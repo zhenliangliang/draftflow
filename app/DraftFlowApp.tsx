@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ProductView, type ProductViewKey } from "./ProductViews";
+import { useEffect, useRef, useState } from "react";
+import { ProductView, type ImportedMarkdownDraft, type ProductViewKey } from "./ProductViews";
 
 type NavKey = "dashboard" | "content" | "editor" | "themes" | "account";
 
@@ -35,6 +35,8 @@ export function DraftFlowApp({ today }: { today: string }) {
   const [active, setActive] = useState<NavKey>("dashboard");
   const [toast, setToast] = useState("");
   const [wechatAccount, setWechatAccount] = useState<{ name: string } | null>(null);
+  const [importedDraft, setImportedDraft] = useState<ImportedMarkdownDraft | null>(null);
+  const markdownFileInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     fetch("/api/wechat/config")
       .then((response) => response.ok ? response.json() : null)
@@ -43,9 +45,53 @@ export function DraftFlowApp({ today }: { today: string }) {
   }, [active]);
 
   function openEditor() {
+    setImportedDraft(null);
     setActive("editor");
     setToast("已打开文章编辑器");
     window.setTimeout(() => setToast(""), 2200);
+  }
+
+  function showToast(message: string) {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 2600);
+  }
+
+  async function importMarkdown(file: File | null) {
+    if (!file) return;
+    try {
+      if (file.size > 2 * 1024 * 1024) throw new Error("MD 文件不能超过 2MB");
+      if (!/\.(md|markdown)$/i.test(file.name)) throw new Error("请选择 .md 或 .markdown 文件");
+
+      let body = (await file.text()).replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+      const metadata: Record<string, string> = {};
+      const frontMatter = body.match(/^---\n([\s\S]*?)\n---(?:\n|$)/);
+      if (frontMatter) {
+        for (const line of frontMatter[1].split("\n")) {
+          const field = line.match(/^([A-Za-z][\w-]*):\s*(.*?)\s*$/);
+          if (field) metadata[field[1].toLowerCase()] = field[2].replace(/^(["'])(.*)\1$/, "$2");
+        }
+        body = body.slice(frontMatter[0].length);
+      }
+
+      const heading = body.match(/^#\s+(.+?)\s*$/m);
+      const title = metadata.title || heading?.[1]?.replace(/[*_`]/g, "").trim() || file.name.replace(/\.(md|markdown)$/i, "");
+      if (heading) body = `${body.slice(0, heading.index)}${body.slice((heading.index ?? 0) + heading[0].length)}`.replace(/^\n+/, "");
+
+      setImportedDraft({
+        id: `${file.name}-${file.lastModified}-${Date.now()}`,
+        title,
+        content: body.trim(),
+        author: metadata.author,
+        digest: metadata.digest || metadata.description,
+        fileName: file.name,
+      });
+      setActive("editor");
+      showToast(`已导入 ${file.name}`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Markdown 导入失败");
+    } finally {
+      if (markdownFileInputRef.current) markdownFileInputRef.current.value = "";
+    }
   }
 
   return (
@@ -57,7 +103,7 @@ export function DraftFlowApp({ today }: { today: string }) {
         </div>
         <nav className="nav-list" aria-label="主导航">
           {nav.map((item) => (
-            <button key={item.key} className={active === item.key ? "active" : ""} onClick={() => setActive(item.key)}>
+            <button key={item.key} className={active === item.key ? "active" : ""} onClick={() => item.key === "editor" ? openEditor() : setActive(item.key)}>
               <Icon name={item.key} /><span>{item.label}</span>
               {item.key === "content" && <em>3</em>}
             </button>
@@ -80,7 +126,7 @@ export function DraftFlowApp({ today }: { today: string }) {
           <div className="top-actions"><button className="ghost-btn">⌘ K 搜索</button><button className="help-btn">?</button><button className="primary-btn" onClick={openEditor}><span>＋</span> 新建文章</button></div>
         </header>
 
-        {active !== "dashboard" && <ProductView active={active as ProductViewKey} onNavigate={(view) => setActive(view)} />}
+        {active !== "dashboard" && <ProductView active={active as ProductViewKey} onNavigate={(view) => setActive(view)} importedDraft={importedDraft} onImportMarkdown={() => markdownFileInputRef.current?.click()} />}
         <div className={`page-content ${active === "dashboard" ? "" : "view-hidden"}`}>
           <div className="welcome-row">
             <div><p className="eyebrow">{today}</p><h1>内容工作台</h1><p>从创作、排版到同步草稿箱，一处完成。</p></div>
@@ -112,7 +158,7 @@ export function DraftFlowApp({ today }: { today: string }) {
             <aside className="panel quick-panel">
               <div className="panel-head"><div><h2>快速开始</h2><p>选择一种创作方式</p></div></div>
               <button className="quick-main" onClick={openEditor}><span>＋</span><div><strong>新建空白文章</strong><small>从头开始创作</small></div><b>→</b></button>
-              <button className="quick-row" onClick={openEditor}><span className="mini-icon">M</span><div><strong>导入 Markdown</strong><small>支持 .md 文件</small></div><b>→</b></button>
+              <button className="quick-row" onClick={() => markdownFileInputRef.current?.click()}><span className="mini-icon">M</span><div><strong>导入 Markdown</strong><small>支持 .md / .markdown 文件</small></div><b>→</b></button>
               <button className="quick-row" onClick={() => setActive("themes")}><span className="mini-icon">模</span><div><strong>从模板创建</strong><small>6 套内置主题</small></div><b>→</b></button>
             </aside>
           </div>
@@ -123,6 +169,7 @@ export function DraftFlowApp({ today }: { today: string }) {
           </section>
         </div>
       </section>
+      <input ref={markdownFileInputRef} className="hidden-file" type="file" accept=".md,.markdown,text/markdown,text/plain" onChange={(event) => void importMarkdown(event.target.files?.[0] ?? null)} />
       {toast && <div className="toast">{toast}</div>}
     </main>
   );

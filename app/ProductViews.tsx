@@ -1,8 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { findLocalMarkdownImages, markdownToWechatHtml } from "@/lib/markdown";
 
 export type ProductViewKey = "content" | "editor" | "themes" | "account";
+
+export type ImportedMarkdownDraft = {
+  id: string;
+  title: string;
+  content: string;
+  author?: string;
+  digest?: string;
+  fileName: string;
+};
 
 const sampleMarkdown = `## 为什么需要一套内容工作台？
 
@@ -37,47 +47,17 @@ const themes = [
   { id: "editorial", name: "编辑部", tag: "杂志感", color: "#6b3150", bg: "#faf2f6", desc: "更强的视觉节奏和栏目感" },
 ];
 
-function renderMarkdown(source: string) {
-  return source.split("\n").map((line, index) => {
-    const image = line.match(/^!\[(.*?)]\((https:\/\/[^)]+)\)$/);
-    // WeChat returns a remote content-image URL that must be preserved verbatim.
-    // eslint-disable-next-line @next/next/no-img-element
-    if (image) return <img key={index} src={image[2]} alt={image[1] || "正文图片"} />;
-    if (line.startsWith("### ")) return <h3 key={index}>{line.slice(4)}</h3>;
-    if (line.startsWith("## ")) return <h2 key={index}>{line.slice(3)}</h2>;
-    if (line.startsWith("> ")) return <blockquote key={index}>{line.slice(2)}</blockquote>;
-    if (line.startsWith("- ")) return <li key={index}>{line.slice(2)}</li>;
-    if (!line.trim()) return <br key={index} />;
-    return <p key={index}>{line}</p>;
-  });
-}
-
-function markdownToWechatHtml(source: string, theme: (typeof themes)[number]) {
-  const escape = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  const lines = source.split("\n").map((line) => {
-    const image = line.match(/^!\[(.*?)]\((https:\/\/[^)]+)\)$/);
-    if (image) return `<p style="margin:18px 0;text-align:center;"><img src="${escape(image[2])}" alt="${escape(image[1] || "正文图片")}" style="display:block;width:100%;height:auto;margin:0 auto;border-radius:4px;" /></p>`;
-    if (line.startsWith("### ")) return `<h3 style="margin:24px 0 10px;color:${theme.color};font-size:18px;line-height:1.5;font-weight:700;">${escape(line.slice(4))}</h3>`;
-    if (line.startsWith("## ")) return `<h2 style="margin:28px 0 14px;padding-left:12px;border-left:4px solid ${theme.color};color:${theme.color};font-size:21px;line-height:1.5;font-weight:700;">${escape(line.slice(3))}</h2>`;
-    if (line.startsWith("> ")) return `<blockquote style="margin:18px 0;padding:14px 16px;border-radius:4px;color:#5c6961;background:#edf2ee;font-size:15px;line-height:1.9;">${escape(line.slice(2))}</blockquote>`;
-    if (line.startsWith("- ")) return `<p style="margin:7px 0;padding-left:12px;color:#3f4943;font-size:16px;line-height:1.9;">• ${escape(line.slice(2))}</p>`;
-    if (!line.trim()) return `<p style="height:8px;margin:0;"><br></p>`;
-    return `<p style="margin:0 0 14px;color:#3f4943;font-size:16px;line-height:1.9;text-align:justify;">${escape(line)}</p>`;
-  }).join("");
-  return `<section style="padding:4px 0;background:${theme.bg};">${lines}</section>`;
-}
-
 async function readApi<T>(response: Response): Promise<T> {
   const data = await response.json() as T & { error?: string };
   if (!response.ok) throw new Error(data.error || "请求失败");
   return data;
 }
 
-export function ProductView({ active, onNavigate }: { active: ProductViewKey; onNavigate: (view: ProductViewKey) => void }) {
+export function ProductView({ active, onNavigate, importedDraft, onImportMarkdown }: { active: ProductViewKey; onNavigate: (view: ProductViewKey) => void; importedDraft: ImportedMarkdownDraft | null; onImportMarkdown: () => void }) {
   if (active === "content") return <ContentView onEdit={() => onNavigate("editor")} />;
   if (active === "themes") return <ThemesView onUse={() => onNavigate("editor")} />;
   if (active === "account") return <AccountView />;
-  return <EditorView />;
+  return <EditorView key={importedDraft?.id ?? "blank"} importedDraft={importedDraft} onImportMarkdown={onImportMarkdown} />;
 }
 
 function ViewHeading({ kicker, title, description, action }: { kicker?: string; title: string; description: string; action?: React.ReactNode }) {
@@ -102,16 +82,16 @@ function ContentView({ onEdit }: { onEdit: () => void }) {
   </div>;
 }
 
-function EditorView() {
-  const [title, setTitle] = useState("为什么内容团队需要一套公众号工作台？");
-  const [content, setContent] = useState(sampleMarkdown);
+function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: ImportedMarkdownDraft | null; onImportMarkdown: () => void }) {
+  const [title, setTitle] = useState(importedDraft?.title || "为什么内容团队需要一套公众号工作台？");
+  const [content, setContent] = useState(importedDraft?.content || sampleMarkdown);
   const [theme, setTheme] = useState("minimal");
   const [showSync, setShowSync] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced] = useState(false);
   const [accountName, setAccountName] = useState("尚未连接公众号");
-  const [author, setAuthor] = useState("编辑部");
-  const [digest, setDigest] = useState("公众号内容工作台如何把创作、排版和草稿同步连成一条完整工作流。");
+  const [author, setAuthor] = useState(importedDraft?.author || "编辑部");
+  const [digest, setDigest] = useState(importedDraft?.digest || "公众号内容工作台如何把创作、排版和草稿同步连成一条完整工作流。");
   const [sourceUrl, setSourceUrl] = useState("");
   const [cover, setCover] = useState<File | null>(null);
   const [syncError, setSyncError] = useState("");
@@ -122,6 +102,8 @@ function EditorView() {
   const bodyImageInputRef = useRef<HTMLInputElement>(null);
   const currentTheme = themes.find((item) => item.id === theme) ?? themes[0];
   const words = useMemo(() => content.replace(/[#>*\-\s]/g, "").length, [content]);
+  const renderedHtml = useMemo(() => markdownToWechatHtml(content, currentTheme), [content, currentTheme]);
+  const localImages = useMemo(() => findLocalMarkdownImages(content), [content]);
 
   useEffect(() => {
     fetch("/api/wechat/config")
@@ -129,11 +111,11 @@ function EditorView() {
       .then((data) => {
         if (data.account) {
           setAccountName(data.account.name);
-          setAuthor(data.account.defaultAuthor || "编辑部");
+          if (!importedDraft?.author) setAuthor(data.account.defaultAuthor || "编辑部");
         }
       })
       .catch(() => undefined);
-  }, []);
+  }, [importedDraft?.author]);
 
   async function startSync() {
     setSyncError("");
@@ -153,7 +135,7 @@ function EditorView() {
           title,
           author,
           digest,
-          content: markdownToWechatHtml(content, currentTheme),
+          content: renderedHtml,
           contentSourceUrl: sourceUrl,
           thumbMediaId: coverResult.mediaId,
           openComment: false,
@@ -193,18 +175,20 @@ function EditorView() {
   return <div className="editor-view">
     <div className="editor-toolbar">
       <div><span className="save-dot" />已自动保存 <b>·</b> {words} 字</div>
-      <div><button className="secondary-btn">预览全文</button><button className="sync-btn" onClick={() => setShowSync(true)}>同步到草稿箱 <span>→</span></button></div>
+      <div><button className="secondary-btn" onClick={onImportMarkdown}>导入 MD</button><button className="secondary-btn">预览全文</button><button className="sync-btn" onClick={() => setShowSync(true)}>同步到草稿箱 <span>→</span></button></div>
     </div>
     <div className="editor-grid">
       <section className="writing-pane">
         <input className="title-input" value={title} onChange={(event) => setTitle(event.target.value)} aria-label="文章标题" />
         <div className="format-bar"><button>H1</button><button>H2</button><button><b>B</b></button><button><i>I</i></button><button>“ ”</button><button>— 列表</button><button>链接</button><button onClick={() => bodyImageInputRef.current?.click()} disabled={imageUploading}>{imageUploading ? "上传中" : "图片"}</button><input ref={bodyImageInputRef} className="hidden-file" type="file" accept="image/jpeg,image/png" onChange={(event) => void uploadBodyImage(event.target.files?.[0] ?? null)} /><span /><small>Markdown</small></div>
+        {importedDraft && <div className="import-notice success">已导入 <strong>{importedDraft.fileName}</strong>，标题和 Markdown 正文已自动识别。</div>}
+        {localImages.length > 0 && <div className="import-notice warning">检测到 {localImages.length} 张本地图片。浏览器无法直接读取 MD 文件旁的图片，请点击上方“图片”逐张上传并替换。</div>}
         {editorError && <div className="editor-error">{editorError}</div>}
         <textarea ref={textareaRef} value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} aria-label="Markdown 编辑器" />
       </section>
       <aside className="preview-pane">
         <div className="preview-head"><div><strong>手机预览</strong><small>实际效果以微信客户端为准</small></div><select value={theme} onChange={(event) => setTheme(event.target.value)}>{themes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></div>
-        <div className="phone-frame"><div className="phone-top"><b>9:41</b><span>● ⌁ ▰</span></div><div className="wechat-bar">‹ <strong>预览</strong> ···</div><article className="wechat-article" style={{ "--theme-color": currentTheme.color, "--theme-bg": currentTheme.bg } as React.CSSProperties}><h1>{title || "未命名文章"}</h1><div className="article-meta">示例公众号 · 2026年8月26日</div>{renderMarkdown(content)}</article></div>
+        <div className="phone-frame"><div className="phone-top"><b>9:41</b><span>● ⌁ ▰</span></div><div className="wechat-bar">‹ <strong>预览</strong> ···</div><article className="wechat-article" style={{ "--theme-color": currentTheme.color, "--theme-bg": currentTheme.bg } as React.CSSProperties}><h1>{title || "未命名文章"}</h1><div className="article-meta">示例公众号 · 2026年8月26日</div><div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderedHtml }} /></article></div>
       </aside>
     </div>
     {showSync && <div className="modal-backdrop"><div className="modal-card sync-modal">

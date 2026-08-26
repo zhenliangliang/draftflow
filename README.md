@@ -4,7 +4,8 @@
 
 ## 当前能力
 
-- Markdown 编辑与微信公众号手机端预览
+- `.md` / `.markdown` 文件一键导入，自动识别标题与 Front Matter
+- GFM Markdown 编辑与微信公众号手机端预览（标题、列表、任务列表、表格、代码块、引用、链接与图片等）
 - 6 套微信兼容排版主题
 - AppID / AppSecret 真实连通验证
 - AppSecret 与 access_token 的 AES-256-GCM 加密存储
