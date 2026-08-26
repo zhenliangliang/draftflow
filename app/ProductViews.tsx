@@ -132,6 +132,7 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
   const [editorError, setEditorError] = useState("");
   const [showAudit, setShowAudit] = useState(false);
   const [auditNotice, setAuditNotice] = useState("");
+  const [aiStatus, setAIStatus] = useState<{ configured: boolean; provider: string; model: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const bodyImageInputRef = useRef<HTMLInputElement>(null);
   const currentTheme = themes.find((item) => item.id === theme) ?? themes[0];
@@ -139,6 +140,15 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
   const renderedHtml = useMemo(() => markdownToWechatHtml(content, currentTheme), [content, currentTheme]);
   const localImages = useMemo(() => findLocalMarkdownImages(content), [content]);
   const audit = useMemo(() => auditArticle({ title, content, digest }), [title, content, digest]);
+
+  async function loadAIStatus() {
+    try {
+      const result = await readApi<{ ai: { configured: boolean; provider: string; model: string } }>(await fetch("/api/ai/config", { cache: "no-store" }));
+      setAIStatus(result.ai);
+    } catch {
+      setAIStatus({ configured: false, provider: "", model: "" });
+    }
+  }
 
   useEffect(() => {
     fetch("/api/wechat/config")
@@ -249,7 +259,7 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
   return <div className="editor-view">
     <div className="editor-toolbar">
       <div><span className="save-dot" />已自动保存 <b>·</b> {words} 字</div>
-      <div><button className="secondary-btn" onClick={onImportMarkdown}>导入 MD</button><button className="audit-btn" onClick={() => { setAuditNotice(""); setShowAudit(true); }}><span>✦</span> 智能审核 <i>{audit.score}</i></button><button className="sync-btn" onClick={() => setShowSync(true)}>同步到草稿箱 <span>→</span></button></div>
+      <div><button className="secondary-btn" onClick={onImportMarkdown}>导入 MD</button><button className="audit-btn" onClick={() => { setAuditNotice(""); setAIStatus(null); setShowAudit(true); void loadAIStatus(); }}><span>✦</span> 智能审核 <i>{audit.score}</i></button><button className="sync-btn" onClick={() => setShowSync(true)}>同步到草稿箱 <span>→</span></button></div>
     </div>
     <div className="editor-grid">
       <section className="writing-pane">
@@ -268,7 +278,7 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
     {showSync && <div className="modal-backdrop"><div className="modal-card sync-modal">
       {!synced ? <><button className="modal-close" onClick={() => setShowSync(false)}>×</button><span className="modal-symbol">微</span><p className="modal-kicker">WECHAT DRAFT</p><h2>{syncing ? "正在发送到草稿箱" : "发送前确认"}</h2><p>{syncing ? "正在上传封面和文章内容，请勿关闭页面。" : `文章将以当前主题排版真实同步到“${accountName}”的草稿箱。`}</p><div className="draft-fields"><label>封面图片 <small>JPG / PNG / GIF / BMP，超过 2MB 自动压缩</small><input type="file" accept="image/jpeg,image/png,image/gif,image/bmp" onChange={(event) => void selectCover(event.target.files?.[0] ?? null)} />{coverNote && <small className="cover-note">✓ {coverNote}</small>}</label><div><label>作者<input value={author} maxLength={16} onChange={(event) => setAuthor(event.target.value)} /></label><label>原文链接<input value={sourceUrl} type="url" placeholder="可选" onChange={(event) => setSourceUrl(event.target.value)} /></label></div><label>摘要<textarea value={digest} maxLength={128} onChange={(event) => setDigest(event.target.value)} /></label></div><div className="sync-summary"><span><small>目标公众号</small><strong>{accountName}</strong></span><span><small>排版主题</small><strong>{currentTheme.name}</strong></span><span><small>智能审核</small><strong className={audit.score >= 75 ? "ok" : "needs-work"}>{audit.score} 分 · {audit.score >= 75 ? "可发布" : "待优化"}</strong></span></div>{syncError && <div className="form-error">{syncError}</div>}{syncing ? <div className="sync-progress"><i /></div> : <button className="sync-confirm" onClick={startSync}>确认并发送到草稿箱</button>}</> : <div className="sync-success"><span>✓</span><p className="modal-kicker">SYNC COMPLETE</p><h2>已发送到草稿箱</h2><p>草稿 Media ID：{draftMediaId.slice(0, 10)}…<br />请前往微信公众号后台进行最终预览和群发。</p><button className="sync-confirm" onClick={() => { setShowSync(false); setSynced(false); setDraftMediaId(""); }}>完成</button></div>}
     </div></div>}
-    {showAudit && <div className="modal-backdrop"><div className="modal-card audit-modal"><button className="modal-close" onClick={() => setShowAudit(false)}>×</button><p className="modal-kicker">SMART FORMAT REVIEW</p><div className="audit-hero"><span className={audit.score >= 90 ? "excellent" : audit.score >= 75 ? "good" : "weak"}>{audit.score}</span><div><h2>智能格式审核</h2><p>{audit.label} · 已检查标题、摘要、结构、段落、图片和互动引导。</p></div></div>{auditNotice && <div className="audit-notice">✓ {auditNotice}</div>}<div className="audit-list">{audit.issues.length ? audit.issues.map((issue) => <article key={issue.id} className={`audit-issue ${issue.level}`}><span>{issue.level === "error" ? "!" : issue.level === "warning" ? "•" : "i"}</span><div><strong>{issue.title}</strong><p>{issue.detail}</p></div>{issue.fixable && <em>可自动修复</em>}</article>) : <div className="audit-perfect"><span>✓</span><strong>格式状态优秀</strong><p>当前没有发现影响发布和手机阅读的问题。</p></div>}</div><div className="ai-review-note"><span>AI</span><div><strong>AI 内容增强</strong><p>后续配置模型后，可继续生成标题钩子、开场摘要和结尾互动建议；当前审核不会把文章上传给第三方。</p></div><b>待配置</b></div><div className="audit-actions"><button className="secondary-btn" onClick={() => setShowAudit(false)}>返回编辑</button><button className="sync-confirm" disabled={!audit.issues.some((issue) => issue.fixable)} onClick={applyFormatFixes}>一键修复格式问题</button></div></div></div>}
+    {showAudit && <div className="modal-backdrop"><div className="modal-card audit-modal"><button className="modal-close" onClick={() => setShowAudit(false)}>×</button><p className="modal-kicker">SMART FORMAT REVIEW</p><div className="audit-hero"><span className={audit.score >= 90 ? "excellent" : audit.score >= 75 ? "good" : "weak"}>{audit.score}</span><div><h2>智能格式审核</h2><p>{audit.label} · 已检查标题、摘要、结构、段落、图片和互动引导。</p></div></div>{auditNotice && <div className="audit-notice">✓ {auditNotice}</div>}<div className="audit-list">{audit.issues.length ? audit.issues.map((issue) => <article key={issue.id} className={`audit-issue ${issue.level}`}><span>{issue.level === "error" ? "!" : issue.level === "warning" ? "•" : "i"}</span><div><strong>{issue.title}</strong><p>{issue.detail}</p></div>{issue.fixable && <em>可自动修复</em>}</article>) : <div className="audit-perfect"><span>✓</span><strong>格式状态优秀</strong><p>当前没有发现影响发布和手机阅读的问题。</p></div>}</div><div className={`ai-review-note ${aiStatus?.configured ? "connected" : ""}`}><span>AI</span><div><strong>AI 内容增强</strong><p>{!aiStatus ? "正在读取内容雷达中的 AI 配置…" : aiStatus.configured ? `已连接 ${aiStatus.provider === "litellm" ? "LiteLLM" : "OpenAI 兼容接口"} · ${aiStatus.model}，可用于标题钩子、开场摘要和结尾互动建议。` : "尚未连接模型，请先在内容雷达中完成 AI 配置。当前规则审核不会把文章上传给第三方。"}</p></div><b className={aiStatus?.configured ? "ok" : ""}>{!aiStatus ? "检测中" : aiStatus.configured ? "已连接" : "待配置"}</b></div><div className="audit-actions"><button className="secondary-btn" onClick={() => setShowAudit(false)}>返回编辑</button><button className="sync-confirm" disabled={!audit.issues.some((issue) => issue.fixable)} onClick={applyFormatFixes}>一键修复格式问题</button></div></div></div>}
   </div>;
 }
 
