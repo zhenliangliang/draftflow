@@ -32,3 +32,58 @@ export const syncRecords = sqliteTable(
     index("idx_sync_records_account_id").on(table.accountId),
   ],
 );
+
+export const appSettings = sqliteTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const contentSources = sqliteTable("content_sources", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  sourceType: text("source_type").notNull().default("wechat"),
+  sourceUrl: text("source_url"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  lastCheckedAt: text("last_checked_at"),
+});
+
+export const radarArticles = sqliteTable(
+  "radar_articles",
+  {
+    id: text("id").primaryKey(),
+    sourceId: text("source_id"),
+    sourceName: text("source_name").notNull(),
+    title: text("title").notNull(),
+    url: text("url").notNull().unique(),
+    digest: text("digest").notNull().default(""),
+    contentExcerpt: text("content_excerpt").notNull().default(""),
+    publishedAt: text("published_at"),
+    readCount: integer("read_count").notNull().default(0),
+    likeCount: integer("like_count").notNull().default(0),
+    hotScore: integer("hot_score").notNull().default(60),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_radar_articles_hot_score").on(table.hotScore),
+    index("idx_radar_articles_source_id").on(table.sourceId),
+  ],
+);
+
+export const contentRecommendations = sqliteTable(
+  "content_recommendations",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    angle: text("angle").notNull(),
+    audience: text("audience").notNull(),
+    outlineJson: text("outline_json").notNull(),
+    keywordsJson: text("keywords_json").notNull(),
+    predictedScore: integer("predicted_score").notNull().default(70),
+    sourceArticleIdsJson: text("source_article_ids_json").notNull(),
+    status: text("status").notNull().default("new"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("idx_content_recommendations_created_at").on(table.createdAt)],
+);

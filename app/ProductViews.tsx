@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { auditArticle, autoFixMarkdown, normalizeEditorialText } from "@/lib/format-audit";
 import { findLocalMarkdownImages, markdownToWechatHtml } from "@/lib/markdown";
+import { RadarView } from "./RadarView";
 
-export type ProductViewKey = "content" | "editor" | "themes" | "account";
+export type ProductViewKey = "content" | "editor" | "radar" | "themes" | "account";
 
 export type ImportedMarkdownDraft = {
   id: string;
@@ -82,8 +83,9 @@ async function optimizeCoverImage(file: File) {
   throw new Error("封面自动压缩后仍超过 2MB，请换一张尺寸更小的图片");
 }
 
-export function ProductView({ active, onNavigate, importedDraft, onImportMarkdown }: { active: ProductViewKey; onNavigate: (view: ProductViewKey) => void; importedDraft: ImportedMarkdownDraft | null; onImportMarkdown: () => void }) {
+export function ProductView({ active, onNavigate, importedDraft, onImportMarkdown, onUseGeneratedDraft }: { active: ProductViewKey; onNavigate: (view: ProductViewKey) => void; importedDraft: ImportedMarkdownDraft | null; onImportMarkdown: () => void; onUseGeneratedDraft: (draft: ImportedMarkdownDraft) => void }) {
   if (active === "content") return <ContentView onEdit={() => onNavigate("editor")} />;
+  if (active === "radar") return <RadarView onUseDraft={onUseGeneratedDraft} />;
   if (active === "themes") return <ThemesView onUse={() => onNavigate("editor")} />;
   if (active === "account") return <AccountView />;
   return <EditorView key={importedDraft?.id ?? "blank"} importedDraft={importedDraft} onImportMarkdown={onImportMarkdown} />;
@@ -283,27 +285,41 @@ function ThemesView({ onUse }: { onUse: () => void }) {
 }
 
 function AccountView() {
+  type SafeAccount = { id: string; name: string; appIdMasked: string; defaultAuthor: string; updatedAt: string; active: boolean };
   const [showConnect, setShowConnect] = useState(false);
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [formError, setFormError] = useState("");
-  const [account, setAccount] = useState<{ name: string; appIdMasked: string; defaultAuthor: string; updatedAt: string } | null>(null);
+  const [account, setAccount] = useState<SafeAccount | null>(null);
+  const [accounts, setAccounts] = useState<SafeAccount[]>([]);
   const [historyCount, setHistoryCount] = useState(0);
   const [name, setName] = useState("");
   const [appId, setAppId] = useState("");
   const [appSecret, setAppSecret] = useState("");
   const [defaultAuthor, setDefaultAuthor] = useState("编辑部");
 
+  async function loadAccounts() {
+    const config = await readApi<{ configured: boolean; account: SafeAccount | null; accounts: SafeAccount[] }>(await fetch("/api/wechat/config"));
+    setConnected(config.configured);
+    setAccount(config.account);
+    setAccounts(config.accounts ?? (config.account ? [config.account] : []));
+    if (config.account) {
+      setName(config.account.name);
+      setDefaultAuthor(config.account.defaultAuthor);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
     Promise.all([
-      fetch("/api/wechat/config").then((response) => readApi<{ configured: boolean; account: typeof account }>(response)),
+      fetch("/api/wechat/config").then((response) => readApi<{ configured: boolean; account: SafeAccount | null; accounts: SafeAccount[] }>(response)),
       fetch("/api/wechat/history").then((response) => readApi<{ records: unknown[] }>(response)),
     ]).then(([config, history]) => {
       if (cancelled) return;
       setConnected(config.configured);
       setAccount(config.account);
+      setAccounts(config.accounts ?? (config.account ? [config.account] : []));
       setHistoryCount(history.records.length);
       if (config.account) {
         setName(config.account.name);
@@ -331,6 +347,7 @@ function AccountView() {
       setAccount(result.account);
       setAppSecret("");
       setShowConnect(false);
+      await loadAccounts();
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "连接失败");
     } finally {
@@ -338,11 +355,27 @@ function AccountView() {
     }
   }
 
+  async function switchAccount(accountId: string) {
+    setFormError("");
+    try {
+      const result = await readApi<{ account: SafeAccount }>(await fetch("/api/wechat/config", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ accountId }) }));
+      setAccount(result.account);
+      setAccounts((items) => items.map((item) => ({ ...item, active: item.id === accountId })));
+      setName(result.account.name);
+      setDefaultAuthor(result.account.defaultAuthor);
+    } catch (error) { setFormError(error instanceof Error ? error.message : "公众号切换失败"); }
+  }
+
+  function openNewAccount() {
+    setName(""); setAppId(""); setAppSecret(""); setDefaultAuthor("编辑部"); setFormError(""); setShowConnect(true);
+  }
+
   return <div className="product-view">
-    <ViewHeading kicker="WECHAT ACCOUNTS" title="公众号" description="管理真实授权账号、接口状态与草稿同步能力。" action={<button className="primary-btn" onClick={() => { setFormError(""); setShowConnect(true); }}>{connected ? "更新凭证" : "＋ 连接公众号"}</button>} />
+    <ViewHeading kicker="WECHAT ACCOUNTS" title="公众号" description="最多绑定 5 个公众号，切换当前账号后，草稿会发送到对应后台。" action={<button className="primary-btn" disabled={accounts.length >= 5} onClick={openNewAccount}>{accounts.length >= 5 ? "已达 5 个上限" : "＋ 连接公众号"}</button>} />
+    {accounts.length > 0 && <section className="panel account-switcher"><div className="section-head"><div><h3>已绑定公众号</h3><p>{accounts.length} / 5 · 点击切换当前草稿目标</p></div></div><div className="account-switcher-list">{accounts.map((item) => <button key={item.id} className={item.active ? "active" : ""} onClick={() => void switchAccount(item.id)}><span>微</span><div><strong>{item.name}</strong><small>{item.appIdMasked}</small></div>{item.active ? <b>当前账号</b> : <i>切换</i>}</button>)}</div></section>}
     {loading ? <div className="account-empty panel">正在读取本地安全配置…</div> : connected && account ? <section className="account-overview panel"><div className="account-avatar">微</div><div className="account-detail"><span className="status green"><i />最近验证正常</span><h2>{account.name}</h2><p>已连接 <span>AppID: {account.appIdMasked}</span></p></div><div className="account-stats"><span><small>同步记录</small><strong>{historyCount}</strong></span><span><small>默认作者</small><strong>{account.defaultAuthor}</strong></span><span><small>凭证状态</small><strong className="ok">已加密</strong></span></div><button className="more-btn">···</button></section> : <section className="account-empty panel"><span>微</span><h2>尚未连接公众号</h2><p>连接后即可上传封面并将排版好的文章发送到真实草稿箱。</p><button className="primary-btn" onClick={() => setShowConnect(true)}>立即连接</button></section>}
-    <div className="account-grid"><section className="panel account-section"><div className="section-head"><div><h3>能力与权限</h3><p>连接时会调用微信接口进行真实检测</p></div><button onClick={() => setShowConnect(true)}>重新验证</button></div>{["获取稳定接口凭证", "上传永久封面素材", "新建公众号草稿", "记录同步结果"].map((item) => <div className="permission-row" key={item}><span>{connected ? "✓" : "○"}</span><strong>{item}</strong><small>{connected ? "已就绪" : "待连接"}</small></div>)}</section><section className="panel account-section"><div className="section-head"><div><h3>安全设置</h3><p>凭证与网络访问保护</p></div></div><div className="security-callout"><span>锁</span><p><strong>AppSecret 使用 AES-256-GCM 加密</strong><small>完整密钥不会回显；微信请求仅从本地服务端发出。</small></p></div><div className="setting-row"><span><strong>IP 白名单</strong><small>需在微信后台添加当前公网出口 IP</small></span><b className={connected ? "ok" : ""}>{connected ? "验证通过" : "待配置"}</b></div><div className="setting-row"><span><strong>发布保护</strong><small>目前只发送草稿，不自动群发</small></span><button className="switch on" aria-label="发布保护已开启"><i /></button></div></section></div>
+    <div className="account-grid"><section className="panel account-section"><div className="section-head"><div><h3>能力与权限</h3><p>连接时会调用微信接口进行真实检测</p></div><button onClick={() => { if (account) { setName(account.name); setDefaultAuthor(account.defaultAuthor); setAppId(""); setAppSecret(""); setShowConnect(true); } }}>更新当前凭证</button></div>{["获取稳定接口凭证", "上传永久封面素材", "新建公众号草稿", "记录同步结果"].map((item) => <div className="permission-row" key={item}><span>{connected ? "✓" : "○"}</span><strong>{item}</strong><small>{connected ? "已就绪" : "待连接"}</small></div>)}</section><section className="panel account-section"><div className="section-head"><div><h3>安全设置</h3><p>凭证与网络访问保护</p></div></div><div className="security-callout"><span>锁</span><p><strong>AppSecret 使用 AES-256-GCM 加密</strong><small>完整密钥不会回显；微信请求仅从本地服务端发出。</small></p></div><div className="setting-row"><span><strong>IP 白名单</strong><small>需在微信后台添加当前公网出口 IP</small></span><b className={connected ? "ok" : ""}>{connected ? "验证通过" : "待配置"}</b></div><div className="setting-row"><span><strong>发布保护</strong><small>目前只发送草稿，不自动群发</small></span><button className="switch on" aria-label="发布保护已开启"><i /></button></div></section></div>
     {formError && !showConnect && <div className="page-error">{formError}</div>}
-    {showConnect && <div className="modal-backdrop"><form className="modal-card connect-modal" onSubmit={connectAccount}><button type="button" className="modal-close" onClick={() => setShowConnect(false)}>×</button><p className="modal-kicker">CONNECT ACCOUNT</p><h2>{connected ? "更新公众号凭证" : "连接微信公众号"}</h2><p>保存前会直接调用微信稳定 Token 接口验证 AppID、AppSecret 和 IP 白名单。</p><label>公众号名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：品牌内容中心" required /></label><label>AppID<input value={appId} onChange={(event) => setAppId(event.target.value)} placeholder="wx 开头的字符串" required /></label><label>AppSecret<input value={appSecret} onChange={(event) => setAppSecret(event.target.value)} type="password" placeholder={connected ? "请重新输入以验证" : "粘贴后将加密保存"} required /></label><label>默认作者<input value={defaultAuthor} onChange={(event) => setDefaultAuthor(event.target.value)} maxLength={16} required /></label><div className="form-note">请先在微信公众平台的 IP 白名单中添加本机当前公网出口 IP。凭证验证成功后才会保存。</div>{formError && <div className="form-error">{formError}</div>}<button className="sync-confirm" type="submit" disabled={connecting}>{connecting ? "正在验证微信接口…" : "验证并安全保存"}</button></form></div>}
+    {showConnect && <div className="modal-backdrop"><form className="modal-card connect-modal" onSubmit={connectAccount}><button type="button" className="modal-close" onClick={() => setShowConnect(false)}>×</button><p className="modal-kicker">CONNECT ACCOUNT</p><h2>连接微信公众号</h2><p>保存前会直接调用微信稳定 Token 接口验证 AppID、AppSecret 和 IP 白名单。</p><label>公众号名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：品牌内容中心" required /></label><label>AppID<input value={appId} onChange={(event) => setAppId(event.target.value)} placeholder="wx 开头的字符串" required /></label><label>AppSecret<input value={appSecret} onChange={(event) => setAppSecret(event.target.value)} type="password" placeholder="粘贴后将加密保存" required /></label><label>默认作者<input value={defaultAuthor} onChange={(event) => setDefaultAuthor(event.target.value)} maxLength={16} required /></label><div className="form-note">每个账号都会单独验证并加密保存，最多可绑定 5 个公众号。</div>{formError && <div className="form-error">{formError}</div>}<button className="sync-confirm" type="submit" disabled={connecting}>{connecting ? "正在验证微信接口…" : "验证并安全保存"}</button></form></div>}
   </div>;
 }

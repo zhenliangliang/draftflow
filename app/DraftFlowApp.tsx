@@ -3,12 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { ProductView, type ImportedMarkdownDraft, type ProductViewKey } from "./ProductViews";
 
-type NavKey = "dashboard" | "content" | "editor" | "themes" | "account";
+type NavKey = "dashboard" | "content" | "editor" | "radar" | "themes" | "account";
 
 const icons: Record<NavKey, React.ReactNode> = {
   dashboard: <><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></>,
   content: <><path d="M5 3h11l3 3v15H5z"/><path d="M15 3v4h4M8 11h8M8 15h8"/></>,
   editor: <><path d="m4 20 4.5-1 10-10-3.5-3.5-10 10z"/><path d="m13.8 6.7 3.5 3.5"/></>,
+  radar: <><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><path d="M12 12 18 6M12 3v2M21 12h-2"/></>,
   themes: <><circle cx="12" cy="12" r="9"/><circle cx="8.5" cy="9" r="1"/><circle cx="12" cy="7" r="1"/><circle cx="15.5" cy="9" r="1"/><path d="M12 21c-2 0-2.4-2.2-.7-3.3 1.3-.8 2-1.5 2-2.7 0-1.1.9-2 2-2H21"/></>,
   account: <><path d="M4 7.5 12 3l8 4.5-8 4.5z"/><path d="m4 12 8 4.5 8-4.5M4 16.5l8 4.5 8-4.5"/></>,
 };
@@ -17,6 +18,7 @@ const nav: { key: NavKey; label: string }[] = [
   { key: "dashboard", label: "工作台" },
   { key: "content", label: "内容" },
   { key: "editor", label: "新建文章" },
+  { key: "radar", label: "内容雷达" },
   { key: "themes", label: "主题样式" },
   { key: "account", label: "公众号" },
 ];
@@ -126,7 +128,7 @@ export function DraftFlowApp({ today }: { today: string }) {
           <div className="top-actions"><button className="ghost-btn">⌘ K 搜索</button><button className="help-btn">?</button><button className="primary-btn" onClick={openEditor}><span>＋</span> 新建文章</button></div>
         </header>
 
-        {active !== "dashboard" && <ProductView active={active as ProductViewKey} onNavigate={(view) => setActive(view)} importedDraft={importedDraft} onImportMarkdown={() => markdownFileInputRef.current?.click()} />}
+        {active !== "dashboard" && <ProductView active={active as ProductViewKey} onNavigate={(view) => setActive(view)} importedDraft={importedDraft} onImportMarkdown={() => markdownFileInputRef.current?.click()} onUseGeneratedDraft={(draft) => { setImportedDraft(draft); setActive("editor"); showToast("已创建原创草稿，请补充你的观点与数据"); }} />}
         <div className={`page-content ${active === "dashboard" ? "" : "view-hidden"}`}>
           <div className="welcome-row">
             <div><p className="eyebrow">{today}</p><h1>内容工作台</h1><p>从创作、排版到同步草稿箱，一处完成。</p></div>
@@ -159,7 +161,7 @@ export function DraftFlowApp({ today }: { today: string }) {
               <div className="panel-head"><div><h2>快速开始</h2><p>选择一种创作方式</p></div></div>
               <button className="quick-main" onClick={openEditor}><span>＋</span><div><strong>新建空白文章</strong><small>从头开始创作</small></div><b>→</b></button>
               <button className="quick-row" onClick={() => markdownFileInputRef.current?.click()}><span className="mini-icon">M</span><div><strong>导入 Markdown</strong><small>支持 .md / .markdown 文件</small></div><b>→</b></button>
-              <button className="quick-row" onClick={() => setActive("themes")}><span className="mini-icon">模</span><div><strong>从模板创建</strong><small>6 套内置主题</small></div><b>→</b></button>
+              <button className="quick-row" onClick={() => setActive("radar")}><span className="mini-icon">雷</span><div><strong>内容雷达</strong><small>分析热门文章并推荐选题</small></div><b>→</b></button>
             </aside>
           </div>
 

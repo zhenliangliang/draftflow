@@ -1,9 +1,23 @@
-import { assertSameOrigin, configureWechatAccount, errorResponse, getSafeAccount } from "@/lib/wechat";
+import { assertSameOrigin, configureWechatAccount, errorResponse, getSafeAccounts, setActiveWechatAccount } from "@/lib/wechat";
 
 export async function GET() {
   try {
-    const account = await getSafeAccount();
-    return Response.json({ ok: true, configured: Boolean(account), account });
+    const accounts = await getSafeAccounts();
+    const account = accounts.find((item) => item.active) ?? accounts[0] ?? null;
+    return Response.json({ ok: true, configured: Boolean(account), account, accounts, limit: 5 });
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    assertSameOrigin(request);
+    const body = await request.json<{ accountId?: string }>();
+    const accountId = body.accountId?.trim() ?? "";
+    if (!accountId) return Response.json({ ok: false, error: "请选择公众号" }, { status: 400 });
+    const account = await setActiveWechatAccount(accountId);
+    return Response.json({ ok: true, account });
   } catch (error) {
     return errorResponse(error);
   }

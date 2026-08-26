@@ -7,6 +7,9 @@
 - `.md` / `.markdown` 文件一键导入，自动识别标题与 Front Matter
 - GFM Markdown 编辑与微信公众号手机端预览（标题、列表、任务列表、表格、代码块、引用、链接与图片等）
 - 智能格式审核、发布评分与异常空格/中英文间距一键修复
+- 最多绑定 5 个公众号，并切换当前草稿同步目标
+- 内容雷达：订阅公众号/RSS、导入公开文章、预测热度与推荐选题
+- 可配置 AI 热点归因和原创 Markdown 草稿生成
 - 6 套微信兼容排版主题
 - AppID / AppSecret 真实连通验证
 - AppSecret 与 access_token 的 AES-256-GCM 加密存储
@@ -27,6 +30,8 @@ npm run dev
 ```
 
 打开 `http://localhost:3000`，进入「公众号」页面配置公众号信息。
+
+如需启用 AI 内容分析，在 `.env.local` 中配置 `OPENAI_API_KEY`、`OPENAI_MODEL` 和 `OPENAI_BASE_URL`。未配置时仍可使用基础热度评分、规则选题和提纲生成功能。
 
 ## 微信后台准备
 

@@ -67,22 +67,36 @@ export async function ensureWechatSchema() {
     )`),
     DB.prepare("CREATE INDEX IF NOT EXISTS idx_sync_records_created_at ON sync_records(created_at)"),
     DB.prepare("CREATE INDEX IF NOT EXISTS idx_sync_records_account_id ON sync_records(account_id)"),
+    DB.prepare(`CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY NOT NULL,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
   ]);
+  await DB.prepare("PRAGMA optimize").run();
 }
 
 export async function getSafeAccount() {
+  const accounts = await getSafeAccounts();
+  return accounts.find((account) => account.active) ?? accounts[0] ?? null;
+}
+
+export async function getSafeAccounts() {
   await ensureWechatSchema();
-  const row = await getRuntimeEnv().DB.prepare(
-    "SELECT id, name, app_id, default_author, updated_at FROM wechat_accounts WHERE id = ?",
-  ).bind("primary").first<{ id: string; name: string; app_id: string; default_author: string; updated_at: string }>();
-  if (!row) return null;
-  return {
+  const { DB } = getRuntimeEnv();
+  const [rows, setting] = await Promise.all([
+    DB.prepare("SELECT id, name, app_id, default_author, updated_at FROM wechat_accounts ORDER BY created_at ASC").all<{ id: string; name: string; app_id: string; default_author: string; updated_at: string }>(),
+    DB.prepare("SELECT value FROM app_settings WHERE key = ?").bind("active_wechat_account_id").first<{ value: string }>(),
+  ]);
+  const activeId = setting?.value ?? rows.results[0]?.id ?? "";
+  return rows.results.map((row) => ({
     id: row.id,
     name: row.name,
     appIdMasked: maskAppId(row.app_id),
     defaultAuthor: row.default_author,
     updatedAt: row.updated_at,
-  };
+    active: row.id === activeId,
+  }));
 }
 
 export async function configureWechatAccount(input: {
@@ -92,11 +106,17 @@ export async function configureWechatAccount(input: {
   defaultAuthor: string;
 }) {
   await ensureWechatSchema();
+  const { DB } = getRuntimeEnv();
+  const existing = await DB.prepare("SELECT id FROM wechat_accounts WHERE app_id = ?").bind(input.appId).first<{ id: string }>();
+  const count = await DB.prepare("SELECT COUNT(*) AS total FROM wechat_accounts").first<{ total: number }>();
+  if (!existing && (count?.total ?? 0) >= 5) throw new WechatApiError(-1007, "最多只能绑定 5 个公众号");
+
   const token = await fetchStableAccessToken(input.appId, input.appSecret);
   const secret = await encrypt(input.appSecret);
   const encryptedToken = await encrypt(token.accessToken);
   const expiresAt = Math.floor(Date.now() / 1000) + Math.max(60, token.expiresIn - 300);
-  await getRuntimeEnv().DB.prepare(`INSERT INTO wechat_accounts (
+  const accountId = existing?.id ?? crypto.randomUUID();
+  await DB.prepare(`INSERT INTO wechat_accounts (
     id, name, app_id, app_secret_ciphertext, app_secret_iv, default_author,
     access_token_ciphertext, access_token_iv, token_expires_at, updated_at
   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -110,7 +130,7 @@ export async function configureWechatAccount(input: {
     access_token_iv = excluded.access_token_iv,
     token_expires_at = excluded.token_expires_at,
     updated_at = CURRENT_TIMESTAMP`).bind(
-      "primary",
+      accountId,
       input.name,
       input.appId,
       secret.ciphertext,
@@ -120,14 +140,30 @@ export async function configureWechatAccount(input: {
       encryptedToken.iv,
       expiresAt,
     ).run();
+  await DB.prepare(`INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`)
+    .bind("active_wechat_account_id", accountId).run();
+  return getSafeAccount();
+}
+
+export async function setActiveWechatAccount(accountId: string) {
+  await ensureWechatSchema();
+  const { DB } = getRuntimeEnv();
+  const exists = await DB.prepare("SELECT id FROM wechat_accounts WHERE id = ?").bind(accountId).first<{ id: string }>();
+  if (!exists) throw new WechatApiError(-1008, "公众号不存在或已解除绑定");
+  await DB.prepare(`INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`)
+    .bind("active_wechat_account_id", accountId).run();
   return getSafeAccount();
 }
 
 export async function getAccessToken() {
   await ensureWechatSchema();
   const { DB } = getRuntimeEnv();
+  const active = await getSafeAccount();
+  if (!active) throw new WechatApiError(-1001, "请先配置公众号 AppID 和 AppSecret");
   const row = await DB.prepare("SELECT * FROM wechat_accounts WHERE id = ?")
-    .bind("primary")
+    .bind(active.id)
     .first<AccountRow>();
   if (!row) throw new WechatApiError(-1001, "请先配置公众号 AppID 和 AppSecret");
 
@@ -154,11 +190,12 @@ export async function addSyncRecord(input: {
   errorMessage?: string;
 }) {
   await ensureWechatSchema();
+  const active = await getSafeAccount();
   await getRuntimeEnv().DB.prepare(`INSERT INTO sync_records (
     id, account_id, title, draft_media_id, status, error_code, error_message
   ) VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(
     crypto.randomUUID(),
-    "primary",
+    active?.id ?? "unconfigured",
     input.title,
     input.draftMediaId ?? null,
     input.status,
