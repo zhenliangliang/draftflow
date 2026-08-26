@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export type ProductViewKey = "content" | "editor" | "themes" | "account";
 
@@ -39,6 +39,10 @@ const themes = [
 
 function renderMarkdown(source: string) {
   return source.split("\n").map((line, index) => {
+    const image = line.match(/^!\[(.*?)]\((https:\/\/[^)]+)\)$/);
+    // WeChat returns a remote content-image URL that must be preserved verbatim.
+    // eslint-disable-next-line @next/next/no-img-element
+    if (image) return <img key={index} src={image[2]} alt={image[1] || "正文图片"} />;
     if (line.startsWith("### ")) return <h3 key={index}>{line.slice(4)}</h3>;
     if (line.startsWith("## ")) return <h2 key={index}>{line.slice(3)}</h2>;
     if (line.startsWith("> ")) return <blockquote key={index}>{line.slice(2)}</blockquote>;
@@ -51,6 +55,8 @@ function renderMarkdown(source: string) {
 function markdownToWechatHtml(source: string, theme: (typeof themes)[number]) {
   const escape = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const lines = source.split("\n").map((line) => {
+    const image = line.match(/^!\[(.*?)]\((https:\/\/[^)]+)\)$/);
+    if (image) return `<p style="margin:18px 0;text-align:center;"><img src="${escape(image[2])}" alt="${escape(image[1] || "正文图片")}" style="display:block;width:100%;height:auto;margin:0 auto;border-radius:4px;" /></p>`;
     if (line.startsWith("### ")) return `<h3 style="margin:24px 0 10px;color:${theme.color};font-size:18px;line-height:1.5;font-weight:700;">${escape(line.slice(4))}</h3>`;
     if (line.startsWith("## ")) return `<h2 style="margin:28px 0 14px;padding-left:12px;border-left:4px solid ${theme.color};color:${theme.color};font-size:21px;line-height:1.5;font-weight:700;">${escape(line.slice(3))}</h2>`;
     if (line.startsWith("> ")) return `<blockquote style="margin:18px 0;padding:14px 16px;border-radius:4px;color:#5c6961;background:#edf2ee;font-size:15px;line-height:1.9;">${escape(line.slice(2))}</blockquote>`;
@@ -110,6 +116,10 @@ function EditorView() {
   const [cover, setCover] = useState<File | null>(null);
   const [syncError, setSyncError] = useState("");
   const [draftMediaId, setDraftMediaId] = useState("");
+  const [imageUploading, setImageUploading] = useState(false);
+  const [editorError, setEditorError] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const bodyImageInputRef = useRef<HTMLInputElement>(null);
   const currentTheme = themes.find((item) => item.id === theme) ?? themes[0];
   const words = useMemo(() => content.replace(/[#>*\-\s]/g, "").length, [content]);
 
@@ -159,6 +169,27 @@ function EditorView() {
     }
   }
 
+  async function uploadBodyImage(file: File | null) {
+    if (!file) return;
+    setImageUploading(true);
+    setEditorError("");
+    try {
+      const body = new FormData();
+      body.append("image", file);
+      const result = await readApi<{ url: string }>(await fetch("/api/wechat/image", { method: "POST", body }));
+      const editor = textareaRef.current;
+      const start = editor?.selectionStart ?? content.length;
+      const end = editor?.selectionEnd ?? start;
+      const markdown = `\n\n![${file.name.replace(/\.[^.]+$/, "") || "正文图片"}](${result.url})\n\n`;
+      setContent((value) => `${value.slice(0, start)}${markdown}${value.slice(end)}`);
+    } catch (error) {
+      setEditorError(error instanceof Error ? error.message : "正文图片上传失败");
+    } finally {
+      setImageUploading(false);
+      if (bodyImageInputRef.current) bodyImageInputRef.current.value = "";
+    }
+  }
+
   return <div className="editor-view">
     <div className="editor-toolbar">
       <div><span className="save-dot" />已自动保存 <b>·</b> {words} 字</div>
@@ -167,8 +198,9 @@ function EditorView() {
     <div className="editor-grid">
       <section className="writing-pane">
         <input className="title-input" value={title} onChange={(event) => setTitle(event.target.value)} aria-label="文章标题" />
-        <div className="format-bar"><button>H1</button><button>H2</button><button><b>B</b></button><button><i>I</i></button><button>“ ”</button><button>— 列表</button><button>链接</button><button>图片</button><span /><small>Markdown</small></div>
-        <textarea value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} aria-label="Markdown 编辑器" />
+        <div className="format-bar"><button>H1</button><button>H2</button><button><b>B</b></button><button><i>I</i></button><button>“ ”</button><button>— 列表</button><button>链接</button><button onClick={() => bodyImageInputRef.current?.click()} disabled={imageUploading}>{imageUploading ? "上传中" : "图片"}</button><input ref={bodyImageInputRef} className="hidden-file" type="file" accept="image/jpeg,image/png" onChange={(event) => void uploadBodyImage(event.target.files?.[0] ?? null)} /><span /><small>Markdown</small></div>
+        {editorError && <div className="editor-error">{editorError}</div>}
+        <textarea ref={textareaRef} value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} aria-label="Markdown 编辑器" />
       </section>
       <aside className="preview-pane">
         <div className="preview-head"><div><strong>手机预览</strong><small>实际效果以微信客户端为准</small></div><select value={theme} onChange={(event) => setTheme(event.target.value)}>{themes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></div>
