@@ -305,6 +305,16 @@ async function decrypt(ciphertext: string, iv: string) {
   return new TextDecoder().decode(plain);
 }
 
+// Reuse the server-side credential vault for other private integration keys.
+// These helpers never expose the master encryption key to a route or client.
+export async function encryptSecret(value: string) {
+  return encrypt(value);
+}
+
+export async function decryptSecret(ciphertext: string, iv: string) {
+  return decrypt(ciphertext, iv);
+}
+
 function toBase64(bytes: Uint8Array) {
   let value = "";
   for (const byte of bytes) value += String.fromCharCode(byte);

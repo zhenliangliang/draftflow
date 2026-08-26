@@ -5,7 +5,7 @@ import { assertSameOrigin, errorResponse } from "@/lib/wechat";
 type AIRecommendations = { recommendations: Array<{ title: string; angle: string; audience: string; outline: string[]; keywords: string[]; predictedScore: number }> };
 
 export async function GET() {
-  try { return Response.json({ ok: true, ai: getAIStatus(), recommendations: await listRecommendations() }); }
+  try { return Response.json({ ok: true, ai: await getAIStatus(), recommendations: await listRecommendations() }); }
   catch (error) { return errorResponse(error); }
 }
 
@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     const all = await listRadarArticles();
     const selected = (body.articleIds?.length ? all.filter((article) => body.articleIds?.includes(article.id)) : all.slice(0, 5)).slice(0, 8);
     if (!selected.length) return Response.json({ ok: false, error: "请先导入至少一篇参考文章" }, { status: 400 });
-    if (!getAIStatus().configured) {
+    if (!(await getAIStatus()).configured) {
       const topic = body.topic?.trim() || selected[0].title.replace(/[：:｜|].*$/, "");
       const fallback = [
         { title: `${topic}：从概念到落地的完整实践路径`, angle: "避开简单资讯复述，聚焦读者可以执行的步骤、取舍和检查清单。", audience: "准备落地相关方案的技术负责人", outline: ["为什么现在值得关注", "落地前的关键判断", "分阶段实施路径", "常见失败原因", "行动检查清单"], keywords: ["实践", "选型", "落地", "避坑"], predictedScore: 78 },

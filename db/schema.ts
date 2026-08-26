@@ -39,6 +39,16 @@ export const appSettings = sqliteTable("app_settings", {
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+export const aiSettings = sqliteTable("ai_settings", {
+  id: text("id").primaryKey(),
+  provider: text("provider").notNull().default("openai"),
+  baseUrl: text("base_url").notNull(),
+  model: text("model").notNull(),
+  apiKeyCiphertext: text("api_key_ciphertext").notNull(),
+  apiKeyIv: text("api_key_iv").notNull(),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
 export const contentSources = sqliteTable("content_sources", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),

@@ -10,7 +10,7 @@ export async function POST(request: Request) {
     const body = await request.json<{ recommendationId?: string; tone?: string }>();
     const recommendation = await getRecommendation(body.recommendationId?.trim() ?? "");
     if (!recommendation) return Response.json({ ok: false, error: "推荐选题不存在" }, { status: 404 });
-    const ai = getAIStatus();
+    const ai = await getAIStatus();
     if (!ai.configured) {
       const outline = recommendation.outline as string[];
       return Response.json({ ok: true, mode: "outline", draft: {

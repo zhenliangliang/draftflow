@@ -31,7 +31,7 @@ npm run dev
 
 打开 `http://localhost:3000`，进入「公众号」页面配置公众号信息。
 
-如需启用 AI 内容分析，在 `.env.local` 中配置 `OPENAI_API_KEY`、`OPENAI_MODEL` 和 `OPENAI_BASE_URL`。未配置时仍可使用基础热度评分、规则选题和提纲生成功能。
+如需启用 AI 内容分析，进入「内容雷达」，点击「配置 AI」，在页面中填写接口地址、模型名称和 API Key。保存前会验证连接，密钥加密写入数据库；未配置时仍可使用基础热度评分、规则选题和提纲生成功能。
 
 ## 微信后台准备
 
@@ -44,8 +44,8 @@ npm run dev
 
 ## 安全说明
 
-- `.env.local` 中的 `DRAFTFLOW_ENCRYPTION_KEY` 用于本地凭证加密，已被 Git 忽略。
-- 不要把 AppSecret 写入前端代码、聊天记录或版本库。
+- `.env.local` 中仅保留服务端主加密密钥 `DRAFTFLOW_ENCRYPTION_KEY`，用于保护页面内保存的 AppSecret 和 AI API Key，已被 Git 忽略。
+- 不要把 AppSecret 或 AI API Key 写入前端代码、聊天记录或版本库。
 - 更换加密密钥后，已有凭证无法解密，需要在界面中重新配置。
 - 正式部署时应通过托管平台的 Secret 管理能力注入加密密钥。
 
