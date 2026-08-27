@@ -27,7 +27,7 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
   };
   renderer.paragraph = ({ tokens }) => `<p style="margin:0 0 14px;color:#3f4943;font-size:16px;line-height:1.9;text-align:left;letter-spacing:normal;word-break:normal;overflow-wrap:break-word;">${inline(tokens)}</p>`;
   renderer.blockquote = ({ tokens }) => `<blockquote style="margin:18px 0;padding:14px 16px;border-left:3px solid ${theme.color};border-radius:4px;color:#5c6961;background:#edf2ee;font-size:15px;line-height:1.9;">${block(tokens)}</blockquote>`;
-  renderer.code = ({ text, lang }) => `<pre style="margin:18px 0;padding:15px 16px;overflow-x:auto;border-radius:6px;color:#e7eee9;background:#16251e;font-size:13px;line-height:1.75;"><code data-language="${escapeHtml(lang || "text")}">${escapeHtml(text)}</code></pre>`;
+  renderer.code = ({ text, lang }) => `<div style="margin:18px 0;overflow:hidden;border:1px solid #2e4138;border-radius:7px;background:#17251f;"><small style="display:block;padding:7px 12px;color:#b8c6be;background:#25372f;font-size:11px;line-height:1;letter-spacing:.08em;">${escapeHtml((lang || "CODE").toUpperCase())}</small><pre style="margin:0;padding:14px;overflow:auto;color:#ecf3ef;background:#17251f;font-size:12px;line-height:1.7;white-space:pre-wrap;word-break:break-word;"><code data-language="${escapeHtml(lang || "text")}">${escapeHtml(text)}</code></pre></div>`;
   renderer.codespan = ({ text }) => `<code style="margin:0 2px;padding:2px 5px;border-radius:3px;color:#a23f35;background:#f5eeeb;font-family:monospace;font-size:14px;letter-spacing:normal;white-space:normal;word-break:break-all;">${escapeHtml(addSoftBreaks(text))}</code>`;
   renderer.hr = () => `<hr style="height:1px;margin:26px 0;border:0;background:#dfe5e1;" />`;
   renderer.strong = ({ tokens }) => `<strong style="color:#243129;font-weight:750;">${inline(tokens)}</strong>`;
@@ -68,7 +68,7 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
     // table, does not duplicate rows, and stays readable on both phone and web.
     const head = `<th width="28%" bgcolor="#edf3ef" style="padding:7px;text-align:left;vertical-align:top;color:${theme.color};font-size:13px;line-height:1.55;">${inline(header[0].tokens)}</th><th bgcolor="#edf3ef" style="padding:7px;text-align:left;vertical-align:top;color:${theme.color};font-size:13px;line-height:1.55;">详情</th>`;
     const body = rows.map((row) => {
-      const details = header.slice(1).map((cell, offset) => `<strong style="color:${theme.color};font-weight:700;">${inline(cell.tokens)}：</strong>${inline(row[offset + 1]?.tokens ?? [])}`).join('<br><span style="display:block;height:5px;"></span>');
+      const details = header.slice(1).map((cell, offset) => `<b style="color:${theme.color};font-weight:700;">${inline(cell.tokens)}：</b>${inline(row[offset + 1]?.tokens ?? [])}`).join('<br><span style="display:block;height:5px;"></span>');
       return `<tr><td style="padding:7px;vertical-align:top;color:#3f4943;font-size:13px;line-height:1.65;word-break:normal;overflow-wrap:anywhere;">${inline(row[0]?.tokens ?? [])}</td><td style="padding:7px;vertical-align:top;color:#3f4943;font-size:13px;line-height:1.65;word-break:normal;overflow-wrap:anywhere;">${details}</td></tr>`;
     }).join("");
     return `<table width="100%" border="1" bordercolor="#dfe4e1" cellspacing="0" cellpadding="0" style="width:100%;margin:12px 0;border-collapse:collapse;table-layout:fixed;"><tr>${head}</tr>${body}</table>`;
@@ -103,9 +103,23 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
     .replace(/\sstyle="[^"]*"/gi, "")
     .replace(/<span>([\s\S]*?)<\/span>/gi, "$1")
     .replace(/<br>\s*<br>/gi, "<br>");
-  return unstyledHtml
-    .replace(/(<tr><td(?:\s[^>]*)?>[\s\S]*?<\/td>)<td>/gi, '$1<td style="overflow-wrap:anywhere">')
+  const compatibleHtml = unstyledHtml
     .replace(/<table([^>]*)>/gi, '<table$1 style="table-layout:fixed">');
+
+  const structuredHtml = compatibleHtml
+    .replace(/<h2>/gi, `<h2 style="margin:26px 0 14px;padding-left:8px;border-left:3px solid ${theme.color};color:${theme.color};font-size:20px">`)
+    .replace(/<h3>([^<]*)<\/h3>\s*(?=<(?:pre|div><small)>)/gi, `<h3 style="margin:20px 0 9px;color:${theme.color};font-size:17px">$1</h3>`);
+  const polishedHtml = structuredHtml
+    .replace(/<div><small>/gi, '<div style="margin:18px 0;overflow:hidden;border:1px solid #2e4138;border-radius:7px;background:#17251f"><small style="display:block;padding:7px 12px;color:#b8c6be;background:#25372f;font-size:11px;letter-spacing:.08em">')
+    .replace(/<pre>/gi, '<pre style="margin:0;padding:14px;color:#ecf3ef;background:#17251f;font-size:12px;line-height:1.7;white-space:pre-wrap;word-break:break-word">')
+    .replace(/<code>/gi, '<code style="padding:2px 4px;border-radius:3px;color:#a23f35;background:#f5eeeb">');
+  if (polishedHtml.length < 19_950) return polishedHtml;
+
+  const codeFirstHtml = compatibleHtml
+    .replace(/<div><small>/gi, '<div style="overflow:hidden;background:#17251f"><small style="display:block;padding:6px 10px;color:#b8c6be;background:#25372f">')
+    .replace(/<pre>/gi, '<pre style="margin:0;padding:14px;color:#ecf3ef;background:#17251f;font-size:12px;line-height:1.7;white-space:pre-wrap;word-break:break-word">')
+    .replace(/<code>/gi, '<code style="padding:2px 4px;color:#a23f35;background:#f5eeeb">');
+  return codeFirstHtml.length < 19_950 ? codeFirstHtml : compatibleHtml;
 }
 
 export function analyzeResponsiveMarkdown(source: string): ResponsiveFormatReport {
