@@ -39,6 +39,41 @@ export const appSettings = sqliteTable("app_settings", {
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+export const customThemes = sqliteTable(
+  "custom_themes",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    tag: text("tag").notNull().default("自定义"),
+    description: text("description").notNull().default(""),
+    configJson: text("config_json").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("idx_custom_themes_updated_at").on(table.updatedAt)],
+);
+
+export const articleTemplates = sqliteTable(
+  "article_templates",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    headerMarkdown: text("header_markdown").notNull().default(""),
+    footerMarkdown: text("footer_markdown").notNull().default(""),
+    qrCodeUrl: text("qr_code_url").notNull().default(""),
+    qrCaption: text("qr_caption").notNull().default(""),
+    showPreviousArticle: integer("show_previous_article", { mode: "boolean" }).notNull().default(true),
+    previousLabel: text("previous_label").notNull().default("上一篇文章"),
+    defaultPreviousTitle: text("default_previous_title").notNull().default(""),
+    defaultPreviousUrl: text("default_previous_url").notNull().default(""),
+    isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("idx_article_templates_updated_at").on(table.updatedAt)],
+);
+
 export const aiSettings = sqliteTable("ai_settings", {
   id: text("id").primaryKey(),
   provider: text("provider").notNull().default("openai"),

@@ -3,13 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import { ProductView, type ImportedMarkdownDraft, type ProductViewKey } from "./ProductViews";
 
-type NavKey = "dashboard" | "content" | "editor" | "radar" | "themes" | "account";
+type NavKey = "dashboard" | "content" | "editor" | "radar" | "templates" | "themes" | "account";
 
 const icons: Record<NavKey, React.ReactNode> = {
   dashboard: <><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></>,
   content: <><path d="M5 3h11l3 3v15H5z"/><path d="M15 3v4h4M8 11h8M8 15h8"/></>,
   editor: <><path d="m4 20 4.5-1 10-10-3.5-3.5-10 10z"/><path d="m13.8 6.7 3.5 3.5"/></>,
   radar: <><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><path d="M12 12 18 6M12 3v2M21 12h-2"/></>,
+  templates: <><path d="M6 3h12v18H6z"/><path d="M9 7h6M9 11h6M9 15h4"/><path d="M3 6v12"/></>,
   themes: <><circle cx="12" cy="12" r="9"/><circle cx="8.5" cy="9" r="1"/><circle cx="12" cy="7" r="1"/><circle cx="15.5" cy="9" r="1"/><path d="M12 21c-2 0-2.4-2.2-.7-3.3 1.3-.8 2-1.5 2-2.7 0-1.1.9-2 2-2H21"/></>,
   account: <><path d="M4 7.5 12 3l8 4.5-8 4.5z"/><path d="m4 12 8 4.5 8-4.5M4 16.5l8 4.5 8-4.5"/></>,
 };
@@ -19,6 +20,7 @@ const nav: { key: NavKey; label: string }[] = [
   { key: "content", label: "内容" },
   { key: "editor", label: "新建文章" },
   { key: "radar", label: "内容雷达" },
+  { key: "templates", label: "文章模板" },
   { key: "themes", label: "主题样式" },
   { key: "account", label: "公众号" },
 ];

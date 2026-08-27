@@ -1,11 +1,14 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { auditArticle, autoFixMarkdown, autoFixTitle, normalizeEditorialText } from "@/lib/format-audit";
 import { analyzeResponsiveMarkdown, findLocalMarkdownImages, markdownToWechatHtml } from "@/lib/markdown";
+import { composeArticleWithTemplate, createArticleTemplateDraft, type ArticleTemplate } from "@/lib/templates";
+import { createCustomThemeDraft, presetThemes, type ArticleTheme } from "@/lib/themes";
 import { RadarView } from "./RadarView";
 
-export type ProductViewKey = "content" | "editor" | "radar" | "themes" | "account";
+export type ProductViewKey = "content" | "editor" | "radar" | "templates" | "themes" | "account";
 
 export type ImportedMarkdownDraft = {
   id: string;
@@ -38,15 +41,6 @@ const allArticles = [
   { title: "把复杂技术写得更清楚的 7 个方法", excerpt: "面向技术作者的结构化表达方法，以及可直接复用的检查清单。", status: "编辑中", tone: "blue", theme: "纸间白", updated: "昨天 18:10", words: "1,920" },
   { title: "每周技术观察 Vol. 08", excerpt: "本周值得关注的 AI 工程、开源工具与开发者产品动态。", status: "已同步", tone: "green", theme: "墨色", updated: "8 月 24 日", words: "3,214" },
   { title: "从零搭建企业知识库", excerpt: "知识采集、分块、索引和权限治理的完整落地路径。", status: "已同步", tone: "green", theme: "科技蓝", updated: "8 月 20 日", words: "4,106" },
-];
-
-const themes = [
-  { id: "minimal", name: "极简绿", tag: "当前使用", color: "#174d3a", bg: "#f7fbf5", desc: "克制、清晰，适合技术与商业内容" },
-  { id: "paper", name: "纸间白", tag: "阅读友好", color: "#745d43", bg: "#fbf7ef", desc: "温暖纸张质感，适合长篇阅读" },
-  { id: "ink", name: "墨色", tag: "专业", color: "#20272b", bg: "#f2f3f3", desc: "高对比黑白，强调观点和结构" },
-  { id: "tech", name: "科技蓝", tag: "理性", color: "#285d87", bg: "#f0f7fb", desc: "冷静理性，适合数据与产品内容" },
-  { id: "sunset", name: "暖橙", tag: "活力", color: "#a14f2a", bg: "#fff5ed", desc: "醒目有温度，适合品牌和活动内容" },
-  { id: "editorial", name: "编辑部", tag: "杂志感", color: "#6b3150", bg: "#faf2f6", desc: "更强的视觉节奏和栏目感" },
 ];
 
 const previewDevices = [
@@ -112,11 +106,129 @@ async function optimizeCoverImage(file: File) {
 }
 
 export function ProductView({ active, onNavigate, importedDraft, onImportMarkdown, onUseGeneratedDraft }: { active: ProductViewKey; onNavigate: (view: ProductViewKey) => void; importedDraft: ImportedMarkdownDraft | null; onImportMarkdown: () => void; onUseGeneratedDraft: (draft: ImportedMarkdownDraft) => void }) {
+  const [customThemes, setCustomThemes] = useState<ArticleTheme[]>([]);
+  const [activeThemeId, setActiveThemeId] = useState("minimal");
+  const [themeError, setThemeError] = useState("");
+  const [articleTemplates, setArticleTemplates] = useState<ArticleTemplate[]>([]);
+  const [activeTemplateId, setActiveTemplateId] = useState("");
+  const [previousArticleTitle, setPreviousArticleTitle] = useState("");
+  const [previousArticleUrl, setPreviousArticleUrl] = useState("");
+  const [templateError, setTemplateError] = useState("");
+  const themes = useMemo(() => [...presetThemes, ...customThemes], [customThemes]);
+
+  useEffect(() => {
+    fetch("/api/themes", { cache: "no-store" })
+      .then((response) => readApi<{ customThemes: ArticleTheme[]; activeThemeId: string }>(response))
+      .then((data) => {
+        setCustomThemes(data.customThemes);
+        setActiveThemeId(data.activeThemeId);
+      })
+      .catch((error) => setThemeError(error instanceof Error ? error.message : "主题读取失败"));
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/templates", { cache: "no-store" })
+      .then((response) => readApi<{ templates: ArticleTemplate[] }>(response))
+      .then((data) => {
+        setArticleTemplates(data.templates);
+        const preferred = data.templates.find((template) => template.isDefault) ?? null;
+        setActiveTemplateId(preferred?.id ?? "");
+        setPreviousArticleTitle(preferred?.defaultPreviousTitle ?? "");
+        setPreviousArticleUrl(preferred?.defaultPreviousUrl ?? "");
+      })
+      .catch((error) => setTemplateError(error instanceof Error ? error.message : "模板读取失败"));
+  }, []);
+
+  async function activateTheme(themeId: string) {
+    const previous = activeThemeId;
+    setActiveThemeId(themeId);
+    setThemeError("");
+    try {
+      await readApi(await fetch("/api/themes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "activate", themeId }),
+      }));
+    } catch (error) {
+      setActiveThemeId(previous);
+      setThemeError(error instanceof Error ? error.message : "主题应用失败");
+      throw error;
+    }
+  }
+
+  async function saveTheme(theme: ArticleTheme) {
+    setThemeError("");
+    const result = await readApi<{ theme: ArticleTheme }>(await fetch("/api/themes", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "save", theme }),
+    }));
+    setCustomThemes((items) => [result.theme, ...items.filter((item) => item.id !== result.theme.id)]);
+    await activateTheme(result.theme.id);
+    return result.theme;
+  }
+
+  async function deleteTheme(themeId: string) {
+    setThemeError("");
+    await readApi(await fetch(`/api/themes?id=${encodeURIComponent(themeId)}`, { method: "DELETE" }));
+    setCustomThemes((items) => items.filter((item) => item.id !== themeId));
+    if (activeThemeId === themeId) setActiveThemeId("minimal");
+  }
+
+  function selectArticleTemplate(templateId: string) {
+    setActiveTemplateId(templateId);
+    const template = articleTemplates.find((item) => item.id === templateId);
+    setPreviousArticleTitle(template?.defaultPreviousTitle ?? "");
+    setPreviousArticleUrl(template?.defaultPreviousUrl ?? "");
+  }
+
+  async function saveArticleTemplate(template: ArticleTemplate) {
+    setTemplateError("");
+    const result = await readApi<{ template: ArticleTemplate }>(await fetch("/api/templates", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "save", template }),
+    }));
+    setArticleTemplates((items) => [
+      result.template,
+      ...items.filter((item) => item.id !== result.template.id).map((item) => result.template.isDefault ? { ...item, isDefault: false } : item),
+    ]);
+    setActiveTemplateId(result.template.id);
+    setPreviousArticleTitle(result.template.defaultPreviousTitle);
+    setPreviousArticleUrl(result.template.defaultPreviousUrl);
+    return result.template;
+  }
+
+  async function makeDefaultArticleTemplate(templateId: string) {
+    setTemplateError("");
+    await readApi(await fetch("/api/templates", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "default", templateId }),
+    }));
+    setArticleTemplates((items) => items.map((item) => ({ ...item, isDefault: item.id === templateId })));
+    selectArticleTemplate(templateId);
+  }
+
+  async function deleteArticleTemplate(templateId: string) {
+    setTemplateError("");
+    await readApi(await fetch(`/api/templates?id=${encodeURIComponent(templateId)}`, { method: "DELETE" }));
+    const remaining = articleTemplates.filter((item) => item.id !== templateId);
+    setArticleTemplates(remaining);
+    if (activeTemplateId === templateId) {
+      const preferred = remaining.find((item) => item.isDefault) ?? null;
+      setActiveTemplateId(preferred?.id ?? "");
+      setPreviousArticleTitle(preferred?.defaultPreviousTitle ?? "");
+      setPreviousArticleUrl(preferred?.defaultPreviousUrl ?? "");
+    }
+  }
+
   if (active === "content") return <ContentView onEdit={() => onNavigate("editor")} />;
   if (active === "radar") return <RadarView onUseDraft={onUseGeneratedDraft} />;
-  if (active === "themes") return <ThemesView onUse={() => onNavigate("editor")} />;
+  if (active === "templates") return <TemplatesView templates={articleTemplates} activeTemplateId={activeTemplateId} error={templateError} onSelect={selectArticleTemplate} onSave={saveArticleTemplate} onDefault={makeDefaultArticleTemplate} onDelete={deleteArticleTemplate} onUse={() => onNavigate("editor")} />;
+  if (active === "themes") return <ThemesView themes={themes} activeThemeId={activeThemeId} error={themeError} onApply={activateTheme} onSave={saveTheme} onDelete={deleteTheme} onUse={() => onNavigate("editor")} />;
   if (active === "account") return <AccountView />;
-  return <EditorView key={importedDraft?.id ?? "blank"} importedDraft={importedDraft} onImportMarkdown={onImportMarkdown} />;
+  return <EditorView key={importedDraft?.id ?? "blank"} importedDraft={importedDraft} onImportMarkdown={onImportMarkdown} themes={themes} activeThemeId={activeThemeId} onThemeChange={activateTheme} themeError={themeError} templates={articleTemplates} activeTemplateId={activeTemplateId} onTemplateChange={selectArticleTemplate} templateError={templateError} previousArticleTitle={previousArticleTitle} previousArticleUrl={previousArticleUrl} onPreviousArticleTitleChange={setPreviousArticleTitle} onPreviousArticleUrlChange={setPreviousArticleUrl} />;
 }
 
 function ViewHeading({ kicker, title, description, action }: { kicker?: string; title: string; description: string; action?: React.ReactNode }) {
@@ -141,11 +253,10 @@ function ContentView({ onEdit }: { onEdit: () => void }) {
   </div>;
 }
 
-function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: ImportedMarkdownDraft | null; onImportMarkdown: () => void }) {
+function EditorView({ importedDraft, onImportMarkdown, themes, activeThemeId, onThemeChange, themeError, templates, activeTemplateId, onTemplateChange, templateError, previousArticleTitle, previousArticleUrl, onPreviousArticleTitleChange, onPreviousArticleUrlChange }: { importedDraft: ImportedMarkdownDraft | null; onImportMarkdown: () => void; themes: ArticleTheme[]; activeThemeId: string; onThemeChange: (themeId: string) => Promise<void>; themeError: string; templates: ArticleTemplate[]; activeTemplateId: string; onTemplateChange: (templateId: string) => void; templateError: string; previousArticleTitle: string; previousArticleUrl: string; onPreviousArticleTitleChange: (value: string) => void; onPreviousArticleUrlChange: (value: string) => void }) {
   const [title, setTitle] = useState(importedDraft?.title || "为什么内容团队需要一套公众号工作台？");
   const [content, setContent] = useState(importedDraft?.content || sampleMarkdown);
   const [editorMode, setEditorMode] = useState<"visual" | "markdown">(importedDraft ? "visual" : "markdown");
-  const [theme, setTheme] = useState("minimal");
   const [showSync, setShowSync] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced] = useState(false);
@@ -167,10 +278,12 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
   const [aiStatus, setAIStatus] = useState<{ configured: boolean; provider: string; model: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const bodyImageInputRef = useRef<HTMLInputElement>(null);
-  const currentTheme = themes.find((item) => item.id === theme) ?? themes[0];
+  const currentTheme = themes.find((item) => item.id === activeThemeId) ?? themes[0];
+  const currentTemplate = templates.find((item) => item.id === activeTemplateId) ?? null;
   const words = useMemo(() => content.replace(/[#>*\-\s]/g, "").length, [content]);
-  const renderedHtml = useMemo(() => markdownToWechatHtml(content, currentTheme), [content, currentTheme]);
-  const localImages = useMemo(() => findLocalMarkdownImages(content), [content]);
+  const composedContent = useMemo(() => composeArticleWithTemplate(content, currentTemplate, { previousTitle: previousArticleTitle, previousUrl: previousArticleUrl }), [content, currentTemplate, previousArticleTitle, previousArticleUrl]);
+  const renderedHtml = useMemo(() => markdownToWechatHtml(composedContent, currentTheme), [composedContent, currentTheme]);
+  const localImages = useMemo(() => findLocalMarkdownImages(composedContent), [composedContent]);
   const audit = useMemo(() => auditArticle({ title, content, digest }), [title, content, digest]);
   const responsiveReport = useMemo(() => analyzeResponsiveMarkdown(content), [content]);
   const previewDevice = previewDevices.find((device) => device.id === previewDeviceId) ?? previewDevices[1];
@@ -318,32 +431,202 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
         </div>
         {importedDraft && <div className="import-notice success">已导入 <strong>{importedDraft.fileName}</strong>，标题和 Markdown 正文已自动识别。</div>}
         {localImages.length > 0 && <div className="import-notice warning">检测到 {localImages.length} 张本地图片。浏览器无法直接读取 MD 文件旁的图片，请切换到 Markdown 模式，点击上方“图片”逐张上传并替换。</div>}
+        {currentTemplate && <section className="template-attachment"><div><span>模</span><div><strong>已引用：{currentTemplate.name}</strong><small>模板内容独立保存，预览和同步时自动组合，不会复制进正文。</small></div>{currentTemplate.qrCodeUrl && <b>含关注二维码</b>}</div>{currentTemplate.showPreviousArticle && <div className="previous-article-fields"><label>上一篇标题<input value={previousArticleTitle} placeholder="例如：上一篇文章标题" onChange={(event) => onPreviousArticleTitleChange(event.target.value)} /></label><label>上一篇链接<input value={previousArticleUrl} type="url" placeholder="https://mp.weixin.qq.com/s/..." onChange={(event) => onPreviousArticleUrlChange(event.target.value)} /></label></div>}</section>}
         {editorError && <div className="editor-error">{editorError}</div>}
         {editorMode === "markdown" ? <textarea ref={textareaRef} value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} aria-label="Markdown 编辑器" /> : <div className="visual-editor-shell"><div className="visual-editor-note"><span><strong>可视化排版</strong><small>表格、标题和正文按当前公众号主题展示</small></span><button onClick={() => setEditorMode("markdown")}>编辑 Markdown</button></div><div className="visual-editor markdown-body" dangerouslySetInnerHTML={{ __html: renderedHtml }} /></div>}
       </section>
       <aside className="preview-pane">
-        <div className="preview-head"><div><strong>草稿箱兼容预览</strong><small>移动优先双列详情表 · 适配 320–760 px</small></div><span className="preview-head-actions"><button onClick={() => setShowResponsivePreview(true)}>多设备 <b>{responsiveReport.score}</b></button><select value={theme} onChange={(event) => setTheme(event.target.value)}>{themes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></span></div>
+        <div className="preview-head"><div><strong>草稿箱兼容预览</strong><small>正文、模板与主题使用同一份微信兼容输出</small></div><span className="preview-head-actions"><button onClick={() => setShowResponsivePreview(true)}>多设备 <b>{responsiveReport.score}</b></button><select aria-label="文章模板" value={activeTemplateId} onChange={(event) => onTemplateChange(event.target.value)}><option value="">不使用模板</option>{templates.map((item) => <option value={item.id} key={item.id}>{item.name}{item.isDefault ? " · 默认" : ""}</option>)}</select><select aria-label="排版主题" value={activeThemeId} onChange={(event) => void onThemeChange(event.target.value)}>{themes.map((item) => <option value={item.id} key={item.id}>{item.name}{item.isCustom ? " · 自定义" : ""}</option>)}</select></span></div>
+        {(themeError || templateError) && <div className="editor-error theme-inline-error">{themeError || templateError}</div>}
         <div className="phone-frame"><div className="phone-top"><b>9:41</b><span>● ⌁ ▰</span></div><div className="wechat-bar">‹ <strong>预览</strong> ···</div><article className="wechat-article" style={{ "--theme-color": currentTheme.color, "--theme-bg": currentTheme.bg } as React.CSSProperties}><h1>{title || "未命名文章"}</h1><div className="article-meta">示例公众号 · 2026年8月26日</div><div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderedHtml }} /></article></div>
       </aside>
     </div>
     {showResponsivePreview && <div className="modal-backdrop"><div className="modal-card responsive-preview-modal"><button className="modal-close" onClick={() => setShowResponsivePreview(false)}>×</button><p className="modal-kicker">RESPONSIVE PREVIEW LAB</p><div className="responsive-preview-heading"><div><h2>多设备文章预览</h2><p>用主流阅读宽度检查表格、长文本、代码和正文节奏。</p></div><div className="device-tabs">{previewDevices.map((device) => <button key={device.id} className={previewDevice.id === device.id ? "active" : ""} onClick={() => setPreviewDeviceId(device.id)}><strong>{device.name}</strong><small>{device.detail}</small></button>)}</div></div><div className="responsive-preview-layout"><section className="device-preview-stage"><div className={`device-preview-shell ${previewDevice.desktop ? "desktop" : "phone"}`} style={{ "--device-width": `${previewDevice.width}px` } as React.CSSProperties}><div className="device-preview-chrome"><span>{previewDevice.desktop ? "微信公众号 · Web 阅读" : "9:41"}</span><b>{previewDevice.name}</b><span>{previewDevice.desktop ? "— □ ×" : "● ⌁ ▰"}</span></div><article className="device-preview-article" style={{ "--theme-color": currentTheme.color, "--theme-bg": currentTheme.bg } as React.CSSProperties}><h1>{title || "未命名文章"}</h1><div className="article-meta">{accountName === "尚未连接公众号" ? "示例公众号" : accountName} · 2026年8月26日</div><div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderedHtml }} /></article></div></section><aside className="format-report-panel"><div className="format-score"><span>{responsiveReport.score}</span><div><strong>跨端适配评分</strong><small>已按最窄 320 px 正文宽度分析</small></div></div><div className="format-stat-grid"><span><strong>{responsiveReport.tableCount}</strong><small>原始表格</small></span><span><strong>{responsiveReport.outputTableCount}</strong><small>适配后表格</small></span><span><strong>{responsiveReport.wideTableCount}</strong><small>宽表已优化</small></span></div><div className="format-check-list"><article><span>✓</span><div><strong>移动端列宽</strong><p>{responsiveReport.wideTableCount ? `已将 ${responsiveReport.wideTableCount} 个宽表格转换为“标识列 + 详情列”，避免文字被挤压。` : "所有表格都在两列以内，无需转换。"}</p></div></article><article><span>✓</span><div><strong>长文本安全换行</strong><p>{responsiveReport.longCellCount ? `识别到 ${responsiveReport.longCellCount} 个长字段，已启用自然换行和链接断行。` : "未发现可能撑破手机宽度的长字段。"}</p></div></article><article><span>✓</span><div><strong>主流屏幕覆盖</strong><p>已覆盖 iPhone SE、iPhone 15/16、华为 Mate 与 Web 宽屏。</p></div></article><article><span>✓</span><div><strong>微信编辑器兼容</strong><p>使用内联样式和原生表格属性，不依赖微信容易过滤的外部样式。</p></div></article></div><button className="responsive-applied" onClick={() => setShowResponsivePreview(false)}>✓ 已应用智能排版优化</button></aside></div></div></div>}
     {showSync && <div className="modal-backdrop"><div className="modal-card sync-modal">
-      {!synced ? <><button className="modal-close" onClick={() => setShowSync(false)}>×</button><span className="modal-symbol">微</span><p className="modal-kicker">WECHAT DRAFT</p><h2>{syncing ? "正在发送到草稿箱" : "发送前确认"}</h2><p>{syncing ? "正在上传封面和文章内容，请勿关闭页面。" : `文章将以当前主题排版真实同步到“${accountName}”的草稿箱。`}</p><div className="draft-fields"><label>封面图片 <small>JPG / PNG / GIF / BMP，上传前自动优化，微信限制 2MB</small><input type="file" accept="image/jpeg,image/png,image/gif,image/bmp" onChange={(event) => void selectCover(event.target.files?.[0] ?? null)} />{coverNote && <small className="cover-note">✓ {coverNote}</small>}</label><div><label>作者<input value={author} maxLength={16} onChange={(event) => setAuthor(event.target.value)} /></label><label>原文链接<input value={sourceUrl} type="url" placeholder="可选" onChange={(event) => setSourceUrl(event.target.value)} /></label></div><label>摘要<textarea value={digest} maxLength={128} onChange={(event) => setDigest(event.target.value)} /></label></div><div className="sync-summary"><span><small>目标公众号</small><strong>{accountName}</strong></span><span><small>排版主题</small><strong>{currentTheme.name}</strong></span><span><small>智能审核</small><strong className={audit.score >= 75 ? "ok" : "needs-work"}>{audit.score} 分 · {audit.score >= 75 ? "可发布" : "待优化"}</strong></span></div>{syncError && <div className="form-error">{syncError}</div>}{syncing ? <div className="sync-progress"><i /></div> : <button className="sync-confirm" onClick={startSync}>确认并发送到草稿箱</button>}</> : <div className="sync-success"><span>✓</span><p className="modal-kicker">SYNC COMPLETE</p><h2>已发送到草稿箱</h2><p>草稿 Media ID：{draftMediaId.slice(0, 10)}…<br />请前往微信公众号后台进行最终预览和群发。</p><button className="sync-confirm" onClick={() => { setShowSync(false); setSynced(false); setDraftMediaId(""); }}>完成</button></div>}
+      {!synced ? <><button className="modal-close" onClick={() => setShowSync(false)}>×</button><span className="modal-symbol">微</span><p className="modal-kicker">WECHAT DRAFT</p><h2>{syncing ? "正在发送到草稿箱" : "发送前确认"}</h2><p>{syncing ? "正在上传封面和文章内容，请勿关闭页面。" : `文章将以当前主题排版真实同步到“${accountName}”的草稿箱。`}</p><div className="draft-fields"><label>封面图片 <small>JPG / PNG / GIF / BMP，上传前自动优化，微信限制 2MB</small><input type="file" accept="image/jpeg,image/png,image/gif,image/bmp" onChange={(event) => void selectCover(event.target.files?.[0] ?? null)} />{coverNote && <small className="cover-note">✓ {coverNote}</small>}</label><div><label>作者<input value={author} maxLength={16} onChange={(event) => setAuthor(event.target.value)} /></label><label>原文链接<input value={sourceUrl} type="url" placeholder="可选" onChange={(event) => setSourceUrl(event.target.value)} /></label></div><label>摘要<textarea value={digest} maxLength={128} onChange={(event) => setDigest(event.target.value)} /></label></div><div className="sync-summary"><span><small>目标公众号</small><strong>{accountName}</strong></span><span><small>排版主题</small><strong>{currentTheme.name}</strong></span><span><small>文章模板</small><strong>{currentTemplate?.name ?? "未使用"}</strong></span><span><small>智能审核</small><strong className={audit.score >= 75 ? "ok" : "needs-work"}>{audit.score} 分 · {audit.score >= 75 ? "可发布" : "待优化"}</strong></span></div>{syncError && <div className="form-error">{syncError}</div>}{syncing ? <div className="sync-progress"><i /></div> : <button className="sync-confirm" onClick={startSync}>确认并发送到草稿箱</button>}</> : <div className="sync-success"><span>✓</span><p className="modal-kicker">SYNC COMPLETE</p><h2>已发送到草稿箱</h2><p>草稿 Media ID：{draftMediaId.slice(0, 10)}…<br />请前往微信公众号后台进行最终预览和群发。</p><button className="sync-confirm" onClick={() => { setShowSync(false); setSynced(false); setDraftMediaId(""); }}>完成</button></div>}
     </div></div>}
     {showAudit && <div className="modal-backdrop"><div className="modal-card audit-modal"><button className="modal-close" onClick={() => setShowAudit(false)}>×</button><p className="modal-kicker">SMART FORMAT REVIEW</p><div className="audit-hero"><span className={audit.score >= 90 ? "excellent" : audit.score >= 75 ? "good" : "weak"}>{audit.score}</span><div><h2>智能格式审核</h2><p>{audit.label} · 已检查标题、摘要、结构、段落、图片和互动引导。</p></div></div>{auditNotice && <div className="audit-notice">✓ {auditNotice}</div>}<div className="audit-list">{audit.issues.length ? audit.issues.map((issue) => <article key={issue.id} className={`audit-issue ${issue.level}`}><span>{issue.level === "error" ? "!" : issue.level === "warning" ? "•" : "i"}</span><div><strong>{issue.title}</strong><p>{issue.detail}</p></div>{issue.fixable && <em>可自动修复</em>}</article>) : <div className="audit-perfect"><span>✓</span><strong>格式状态优秀</strong><p>当前没有发现影响发布和手机阅读的问题。</p></div>}</div><div className={`ai-review-note ${aiStatus?.configured ? "connected" : ""}`}><span>AI</span><div><strong>AI 内容增强</strong><p>{!aiStatus ? "正在读取内容雷达中的 AI 配置…" : aiStatus.configured ? `已连接 ${aiStatus.provider === "litellm" ? "LiteLLM" : "OpenAI 兼容接口"} · ${aiStatus.model}，可用于标题钩子、开场摘要和结尾互动建议。` : "尚未连接模型，请先在内容雷达中完成 AI 配置。当前规则审核不会把文章上传给第三方。"}</p></div><b className={aiStatus?.configured ? "ok" : ""}>{!aiStatus ? "检测中" : aiStatus.configured ? "已连接" : "待配置"}</b></div><div className="audit-actions"><button className="secondary-btn" onClick={() => setShowAudit(false)}>返回编辑</button><button className="sync-confirm" disabled={!audit.issues.some((issue) => issue.fixable)} onClick={applyFormatFixes}>一键修复格式问题</button></div></div></div>}
   </div>;
 }
 
-function ThemesView({ onUse }: { onUse: () => void }) {
-  const [selected, setSelected] = useState("minimal");
+function TemplatesView({ templates, activeTemplateId, error, onSelect, onSave, onDefault, onDelete, onUse }: { templates: ArticleTemplate[]; activeTemplateId: string; error: string; onSelect: (templateId: string) => void; onSave: (template: ArticleTemplate) => Promise<ArticleTemplate>; onDefault: (templateId: string) => Promise<void>; onDelete: (templateId: string) => Promise<void>; onUse: () => void }) {
+  const [selected, setSelected] = useState(activeTemplateId || templates[0]?.id || "");
+  const [editing, setEditing] = useState<ArticleTemplate | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [localError, setLocalError] = useState("");
+  const [notice, setNotice] = useState("");
+  const selectedTemplate = templates.find((template) => template.id === selected) ?? null;
+
+  async function save(template: ArticleTemplate) {
+    setBusy(true);
+    setLocalError("");
+    try {
+      const saved = await onSave(template);
+      setSelected(saved.id);
+      setEditing(null);
+      setNotice(`“${saved.name}”已保存，可在新文章中直接引用`);
+    } catch (saveError) {
+      setLocalError(saveError instanceof Error ? saveError.message : "模板保存失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function makeDefault(template: ArticleTemplate) {
+    setBusy(true);
+    setLocalError("");
+    try {
+      await onDefault(template.id);
+      setSelected(template.id);
+      setNotice(`“${template.name}”已设为新文章默认模板`);
+    } catch (defaultError) {
+      setLocalError(defaultError instanceof Error ? defaultError.message : "默认模板设置失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(template: ArticleTemplate) {
+    if (!window.confirm(`确定删除文章模板“${template.name}”吗？`)) return;
+    setBusy(true);
+    setLocalError("");
+    try {
+      await onDelete(template.id);
+      const next = templates.find((item) => item.id !== template.id)?.id ?? "";
+      setSelected(next);
+      setNotice(`已删除“${template.name}”`);
+    } catch (deleteError) {
+      setLocalError(deleteError instanceof Error ? deleteError.message : "模板删除失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return <div className="product-view">
-    <ViewHeading kicker="STYLE SYSTEM" title="主题样式" description="一键应用排版主题，所有样式均针对微信正文兼容性优化。" action={<button className="secondary-btn">＋ 自定义主题</button>} />
-    <div className="theme-grid">{themes.map((theme) => <article key={theme.id} className={`theme-card ${selected === theme.id ? "selected" : ""}`}>
-      <button type="button" className="theme-preview" onClick={() => setSelected(theme.id)} style={{ "--sample": theme.color, "--sample-bg": theme.bg } as React.CSSProperties}><span /><h3>让内容更有力量</h3><p>清晰的结构，让每一次表达都更准确、更有节奏。</p><h4>01 核心观点</h4><i /><i /></button>
-      <div className="theme-info"><div><strong>{theme.name}</strong><span>{theme.tag}</span></div><p>{theme.desc}</p><button onClick={(event) => { event.stopPropagation(); setSelected(theme.id); onUse(); }}>应用到文章</button></div>
+    <ViewHeading kicker="REUSABLE CONTENT" title="文章模板" description="把固定开场、结尾引导、延伸阅读和关注二维码保存一次，每篇文章直接引用。" action={<button className="primary-btn" onClick={() => setEditing(createArticleTemplateDraft())}>＋ 新建模板</button>} />
+    {(error || localError) && <div className="editor-error template-page-message">{localError || error}</div>}
+    {notice && <div className="import-notice success template-page-message">✓ {notice}</div>}
+    {!templates.length ? <section className="template-empty panel"><span>模</span><h2>还没有文章模板</h2><p>创建第一个模板，把公众号关注二维码、固定结尾和上一篇文章入口保存起来。</p><button className="primary-btn" onClick={() => setEditing(createArticleTemplateDraft())}>创建文章模板</button></section> : <div className="template-grid">{templates.map((template) => <article key={template.id} className={`template-card panel ${selected === template.id ? "selected" : ""}`}><div className="template-card-select" role="button" tabIndex={0} onClick={() => setSelected(template.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelected(template.id); } }}><div className="template-card-top"><span>模</span><div><strong>{template.name}</strong><small>{template.description}</small></div>{template.isDefault && <b>默认</b>}</div><div className="template-feature-list"><span className={template.headerMarkdown ? "on" : ""}>固定开场</span><span className={template.footerMarkdown ? "on" : ""}>固定结尾</span><span className={template.showPreviousArticle ? "on" : ""}>上一篇文章</span><span className={template.qrCodeUrl ? "on" : ""}>关注二维码</span></div>{template.qrCodeUrl && <div className="template-qr-mini"><img src={template.qrCodeUrl} alt="公众号关注二维码" /><span><strong>关注引导已配置</strong><small>{template.qrCaption}</small></span></div>}</div><div className="template-card-actions"><button onClick={() => setEditing({ ...template })}>编辑</button><button disabled={busy || template.isDefault} onClick={() => void makeDefault(template)}>{template.isDefault ? "默认模板" : "设为默认"}</button><button className="danger" onClick={() => void remove(template)}>删除</button></div>{selected === template.id && <b className="selected-check">✓</b>}</article>)}</div>}
+    {selectedTemplate && <section className="template-use-bar panel"><div><small>当前选择</small><strong>{selectedTemplate.name}</strong><span>模板与正文保持独立，更新模板不会污染 Markdown 原文。</span></div><button className="secondary-btn" onClick={() => setEditing({ ...selectedTemplate })}>编辑模板</button><button className="primary-btn" onClick={() => { onSelect(selectedTemplate.id); onUse(); }}>引用并开始写作</button></section>}
+    {editing && <TemplateDesigner template={editing} busy={busy} error={localError} onCancel={() => { setEditing(null); setLocalError(""); }} onSave={save} />}
+  </div>;
+}
+
+function TemplateDesigner({ template, busy, error, onCancel, onSave }: { template: ArticleTemplate; busy: boolean; error: string; onCancel: () => void; onSave: (template: ArticleTemplate) => Promise<void> }) {
+  const [draft, setDraft] = useState(template);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const qrInputRef = useRef<HTMLInputElement>(null);
+  const update = <K extends keyof ArticleTemplate>(key: K, value: ArticleTemplate[K]) => setDraft((current) => ({ ...current, [key]: value }));
+  const previewMarkdown = useMemo(() => composeArticleWithTemplate("## 本期内容\n\n这里是每篇文章独立创作的正文。模板不会写进正文编辑区，而是在预览和同步时自动引用。", draft, {}), [draft]);
+  const previewHtml = useMemo(() => markdownToWechatHtml(previewMarkdown, presetThemes[0]), [previewMarkdown]);
+
+  async function uploadQrCode(file: File | null) {
+    if (!file) return;
+    setUploading(true);
+    setUploadError("");
+    try {
+      const body = new FormData();
+      body.append("image", file);
+      const result = await readApi<{ url: string }>(await fetch("/api/wechat/image", { method: "POST", body }));
+      update("qrCodeUrl", result.url);
+    } catch (uploadFailure) {
+      setUploadError(uploadFailure instanceof Error ? uploadFailure.message : "二维码上传失败");
+    } finally {
+      setUploading(false);
+      if (qrInputRef.current) qrInputRef.current.value = "";
+    }
+  }
+
+  return <div className="modal-backdrop"><div className="modal-card template-designer-modal"><button className="modal-close" onClick={onCancel}>×</button><p className="modal-kicker">ARTICLE TEMPLATE BUILDER</p><div className="template-designer-heading"><div><h2>{template.id ? "编辑文章模板" : "创建文章模板"}</h2><p>模板与文章正文独立保存，在发送草稿时自动合并。</p></div><label className="default-template-check"><input type="checkbox" checked={draft.isDefault} onChange={(event) => update("isDefault", event.target.checked)} />设为新文章默认</label></div><div className="template-designer-layout"><form onSubmit={(event) => { event.preventDefault(); void onSave(draft); }}><section className="template-form-section"><h3>模板信息</h3><label>模板名称<input required maxLength={32} value={draft.name} onChange={(event) => update("name", event.target.value)} /></label><label>用途说明<input maxLength={100} value={draft.description} onChange={(event) => update("description", event.target.value)} /></label></section><section className="template-form-section"><h3>固定内容</h3><label>文章开场 <small>可留空，支持 Markdown</small><textarea value={draft.headerMarkdown} placeholder="例如：本栏目专注分享 AI 与运维实践。" onChange={(event) => update("headerMarkdown", event.target.value)} /></label><label>文章结尾 <small>支持 Markdown</small><textarea value={draft.footerMarkdown} placeholder="> 如果文章对你有帮助，欢迎点赞、收藏和分享。" onChange={(event) => update("footerMarkdown", event.target.value)} /></label></section><section className="template-form-section"><div className="template-section-title"><h3>上一篇文章</h3><button type="button" className={`switch ${draft.showPreviousArticle ? "on" : ""}`} aria-label="启用上一篇文章" onClick={() => update("showPreviousArticle", !draft.showPreviousArticle)}><i /></button></div>{draft.showPreviousArticle && <><label>区块标题<input value={draft.previousLabel} maxLength={24} onChange={(event) => update("previousLabel", event.target.value)} /></label><label>默认文章标题 <small>写新文章时可以覆盖</small><input value={draft.defaultPreviousTitle} maxLength={80} placeholder="上一篇文章标题" onChange={(event) => update("defaultPreviousTitle", event.target.value)} /></label><label>默认文章链接<input type="url" value={draft.defaultPreviousUrl} placeholder="https://mp.weixin.qq.com/s/..." onChange={(event) => update("defaultPreviousUrl", event.target.value)} /></label></>}</section><section className="template-form-section"><h3>关注二维码</h3><div className="qr-upload-row">{draft.qrCodeUrl ? <img src={draft.qrCodeUrl} alt="公众号关注二维码预览" /> : <span>二维码</span>}<div><button type="button" className="secondary-btn" disabled={uploading} onClick={() => qrInputRef.current?.click()}>{uploading ? "正在上传…" : draft.qrCodeUrl ? "更换二维码" : "上传二维码"}</button><small>优先上传到微信素材库，确保草稿和手机端稳定显示。</small></div></div><input ref={qrInputRef} className="hidden-file" type="file" accept="image/jpeg,image/png" onChange={(event) => void uploadQrCode(event.target.files?.[0] ?? null)} /><label>或填写图片地址<input type="url" value={draft.qrCodeUrl} placeholder="https://..." onChange={(event) => update("qrCodeUrl", event.target.value)} /></label><label>关注引导语<input value={draft.qrCaption} maxLength={80} onChange={(event) => update("qrCaption", event.target.value)} /></label>{uploadError && <div className="form-error">{uploadError}</div>}</section>{error && <div className="form-error">{error}</div>}<div className="template-designer-actions"><button type="button" className="secondary-btn" onClick={onCancel}>取消</button><button type="submit" className="primary-btn" disabled={busy || uploading}>{busy ? "正在保存…" : "保存模板"}</button></div></form><aside className="template-live-preview"><div className="template-preview-phone"><div className="template-preview-phone-top"><span>9:41</span><b>文章预览</b><span>● ⌁ ▰</span></div><article><h1>一篇新文章的标题</h1><small>示例公众号 · 刚刚</small><div className="markdown-body" dangerouslySetInnerHTML={{ __html: previewHtml }} /></article></div><p>引用预览 · 固定内容不会复制到正文编辑区</p></aside></div></div></div>;
+}
+
+const themePreviewMarkdown = `## 01 核心观点
+
+好的排版让读者更快看见重点，也让内容保持呼吸感。
+
+> 主题会真实转换为微信公众号兼容的内联样式。
+
+| 项目 | 效果 |
+| --- | --- |
+| 正文 | 清晰易读 |
+| 代码 | 移动端友好 |
+
+\`\`\`js
+const idea = "让内容更有力量";
+\`\`\``;
+
+function ThemesView({ themes, activeThemeId, error, onApply, onSave, onDelete, onUse }: { themes: ArticleTheme[]; activeThemeId: string; error: string; onApply: (themeId: string) => Promise<void>; onSave: (theme: ArticleTheme) => Promise<ArticleTheme>; onDelete: (themeId: string) => Promise<void>; onUse: () => void }) {
+  const [selected, setSelected] = useState(activeThemeId);
+  const [editing, setEditing] = useState<ArticleTheme | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [localError, setLocalError] = useState("");
+  const selectedTheme = themes.find((theme) => theme.id === selected) ?? themes[0];
+
+  async function applySelected() {
+    setBusy(true);
+    setLocalError("");
+    try {
+      await onApply(selectedTheme.id);
+      onUse();
+    } catch (applyError) {
+      setLocalError(applyError instanceof Error ? applyError.message : "主题应用失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveCustomTheme(theme: ArticleTheme) {
+    setBusy(true);
+    setLocalError("");
+    try {
+      const saved = await onSave(theme);
+      setSelected(saved.id);
+      setEditing(null);
+      setNotice(`“${saved.name}”已保存并应用到文章`);
+    } catch (saveError) {
+      setLocalError(saveError instanceof Error ? saveError.message : "主题保存失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeTheme(theme: ArticleTheme) {
+    if (!window.confirm(`确定删除自定义主题“${theme.name}”吗？`)) return;
+    setBusy(true);
+    setLocalError("");
+    try {
+      await onDelete(theme.id);
+      setSelected(theme.id === activeThemeId ? "minimal" : activeThemeId);
+      setNotice(`已删除“${theme.name}”`);
+    } catch (deleteError) {
+      setLocalError(deleteError instanceof Error ? deleteError.message : "主题删除失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <div className="product-view">
+    <ViewHeading kicker="STYLE SYSTEM" title="主题样式" description="创建自己的排版系统，并以微信兼容样式应用到预览和草稿箱。" action={<button className="secondary-btn" onClick={() => setEditing(createCustomThemeDraft(selectedTheme))}>＋ 自定义主题</button>} />
+    {(error || localError) && <div className="editor-error theme-page-message">{localError || error}</div>}
+    {notice && <div className="import-notice success theme-page-message">✓ {notice}</div>}
+    <div className="theme-grid">{themes.map((theme) => <article key={theme.id} className={`theme-card ${selected === theme.id ? "selected" : ""} ${activeThemeId === theme.id ? "active-theme" : ""}`}>
+      <button type="button" className="theme-preview" onClick={() => { setNotice(""); setSelected(theme.id); }} style={{ "--sample": theme.color, "--sample-bg": theme.bg } as React.CSSProperties}><span /><h3>让内容更有力量</h3><p style={{ color: theme.textColor, fontSize: `${Math.max(8, theme.bodyFontSize - 5)}px`, lineHeight: theme.lineHeight }}>清晰的结构，让每一次表达都更准确、更有节奏。</p><h4 className={`heading-${theme.headingStyle}`}>01 核心观点</h4><i /><i /></button>
+      <div className="theme-info"><div><strong>{theme.name}</strong><span>{activeThemeId === theme.id ? "使用中" : theme.tag}</span></div><p>{theme.desc}</p><div className="theme-card-actions"><button disabled={busy} onClick={(event) => { event.stopPropagation(); setSelected(theme.id); void onApply(theme.id).then(onUse).catch((applyError) => setLocalError(applyError instanceof Error ? applyError.message : "主题应用失败")); }}>{activeThemeId === theme.id ? "打开编辑器" : "应用到文章"}</button>{theme.isCustom && <><button className="icon-action" aria-label={`编辑${theme.name}`} title="编辑主题" onClick={() => setEditing({ ...theme })}>✎</button><button className="icon-action danger" aria-label={`删除${theme.name}`} title="删除主题" onClick={() => void removeTheme(theme)}>×</button></>}</div></div>
       {selected === theme.id && <b className="selected-check">✓</b>}
     </article>)}</div>
+    <section className="theme-selection-bar panel"><div><small>当前选择</small><strong><i style={{ background: selectedTheme.color }} />{selectedTheme.name}</strong><span>{selectedTheme.bodyFontSize}px 正文 · {selectedTheme.lineHeight} 倍行高 · {selectedTheme.isCustom ? "自定义主题" : "系统预设"}</span></div><button className="secondary-btn" onClick={() => setEditing(createCustomThemeDraft(selectedTheme))}>复制并自定义</button><button className="primary-btn" disabled={busy} onClick={() => void applySelected()}>{busy ? "正在应用…" : "应用并开始写作"}</button></section>
+    {editing && <ThemeDesigner theme={editing} busy={busy} error={localError} onCancel={() => { setEditing(null); setLocalError(""); }} onSave={saveCustomTheme} />}
   </div>;
+}
+
+function ThemeDesigner({ theme, busy, error, onCancel, onSave }: { theme: ArticleTheme; busy: boolean; error: string; onCancel: () => void; onSave: (theme: ArticleTheme) => Promise<void> }) {
+  const [draft, setDraft] = useState(theme);
+  const previewHtml = useMemo(() => markdownToWechatHtml(themePreviewMarkdown, draft), [draft]);
+  const update = <K extends keyof ArticleTheme>(key: K, value: ArticleTheme[K]) => setDraft((current) => ({ ...current, [key]: value }));
+
+  return <div className="modal-backdrop"><div className="modal-card theme-designer-modal"><button className="modal-close" onClick={onCancel}>×</button><p className="modal-kicker">CUSTOM THEME STUDIO</p><div className="theme-designer-heading"><div><h2>{theme.id ? "编辑自定义主题" : "创建自定义主题"}</h2><p>所有设置都会转换成微信公众号可保留的内联样式。</p></div><span><i style={{ background: draft.color }} />实时预览</span></div><div className="theme-designer-layout"><form onSubmit={(event) => { event.preventDefault(); void onSave(draft); }}><section className="theme-control-section"><h3>基本信息</h3><label>主题名称<input value={draft.name} maxLength={24} required onChange={(event) => update("name", event.target.value)} /></label><label>主题说明<input value={draft.desc} maxLength={80} onChange={(event) => update("desc", event.target.value)} /></label><div className="theme-color-row"><label>主题色<span className="color-input"><input type="color" value={draft.color} onChange={(event) => update("color", event.target.value)} /><b>{draft.color}</b></span></label><label>背景色<span className="color-input"><input type="color" value={draft.bg} onChange={(event) => update("bg", event.target.value)} /><b>{draft.bg}</b></span></label><label>正文色<span className="color-input"><input type="color" value={draft.textColor} onChange={(event) => update("textColor", event.target.value)} /><b>{draft.textColor}</b></span></label></div></section><section className="theme-control-section"><h3>正文节奏</h3><label className="range-control"><span>正文字号 <b>{draft.bodyFontSize}px</b></span><input type="range" min="13" max="18" step="1" value={draft.bodyFontSize} onChange={(event) => update("bodyFontSize", Number(event.target.value))} /></label><label className="range-control"><span>行高 <b>{draft.lineHeight}</b></span><input type="range" min="1.5" max="2.2" step="0.05" value={draft.lineHeight} onChange={(event) => update("lineHeight", Number(event.target.value))} /></label><label className="range-control"><span>段落间距 <b>{draft.paragraphSpacing}px</b></span><input type="range" min="8" max="24" step="1" value={draft.paragraphSpacing} onChange={(event) => update("paragraphSpacing", Number(event.target.value))} /></label></section><section className="theme-control-section"><h3>组件样式</h3><div className="theme-select-grid"><label>二级标题<select value={draft.headingStyle} onChange={(event) => update("headingStyle", event.target.value as ArticleTheme["headingStyle"])}><option value="bar">左侧色条</option><option value="underline">底部横线</option><option value="plain">纯文字</option></select></label><label>引用样式<select value={draft.quoteStyle} onChange={(event) => update("quoteStyle", event.target.value as ArticleTheme["quoteStyle"])}><option value="tint">浅色底纹</option><option value="line">左侧引线</option><option value="card">描边卡片</option></select></label><label>代码块<select value={draft.codeStyle} onChange={(event) => update("codeStyle", event.target.value as ArticleTheme["codeStyle"])}><option value="dark">深色代码</option><option value="light">浅色代码</option></select></label><label>表格<select value={draft.tableStyle} onChange={(event) => update("tableStyle", event.target.value as ArticleTheme["tableStyle"])}><option value="soft">柔和表头</option><option value="grid">强调表头</option></select></label></div></section>{error && <div className="form-error">{error}</div>}<div className="theme-designer-actions"><button type="button" className="secondary-btn" onClick={onCancel}>取消</button><button type="submit" className="primary-btn" disabled={busy}>{busy ? "正在保存…" : "保存并应用"}</button></div></form><aside className="theme-live-preview"><div className="theme-preview-phone"><div className="theme-preview-phone-top"><span>9:41</span><b>预览</b><span>● ⌁ ▰</span></div><article style={{ background: draft.bg }}><h1>让内容更有力量</h1><small>示例公众号 · 刚刚</small><div className="markdown-body" dangerouslySetInnerHTML={{ __html: previewHtml }} /></article></div><p>微信兼容预览 · 正文 {draft.bodyFontSize}px · 手机宽度 393px</p></aside></div></div></div>;
 }
 
 function AccountView() {
