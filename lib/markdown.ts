@@ -45,13 +45,23 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
     return `<img src="${escapeHtml(safe)}" alt="${escapeHtml(text || "正文图片")}"${title ? ` title="${escapeHtml(title)}"` : ""} style="display:block;width:100%;height:auto;margin:18px auto;border-radius:4px;" />`;
   };
   renderer.table = ({ header, rows }) => {
-    const labels = header.map((cell) => inline(cell.tokens).replace(/<[^>]+>/g, "").trim());
-    const cards = rows.map((row) => {
-      const primary = inline(row[0]?.tokens ?? []);
-      const details = row.slice(1).map((cell, index) => `<br><b>${labels[index + 1] || `字段 ${index + 2}`}：</b>${inline(cell.tokens)}`).join("");
-      return `<p style="margin:0 0 14px;"><b>▌ ${primary}</b>${details}</p>`;
-    }).join("");
-    return `<section style="margin:18px 0;padding:10px;border-radius:6px;background:#f4f7f5;">${cards}</section>`;
+    const renderTable = (indexes: number[]) => {
+      const firstColumnWidth = indexes.length >= 4 ? "28%" : "34%";
+      const head = indexes.map((index, position) => `<th${position === 0 ? ` width="${firstColumnWidth}"` : ""} bgcolor="#edf3ef">${inline(header[index].tokens)}</th>`).join("");
+      const body = rows.map((row) => `<tr>${indexes.map((index) => `<td>${inline(row[index]?.tokens ?? [])}</td>`).join("")}</tr>`).join("");
+      return `<table width="100%" border="1" bordercolor="#dfe4e1" cellspacing="0" cellpadding="5"><tr>${head}</tr>${body}</table>`;
+    };
+
+    if (header.length <= 3) return renderTable(header.map((_, index) => index));
+
+    const tables: string[] = [];
+    for (let start = 1; start < header.length; start += 3) {
+      const indexes = [0, start];
+      if (start + 1 < header.length) indexes.push(start + 1);
+      if (start + 2 < header.length) indexes.push(start + 2);
+      tables.push(renderTable(indexes));
+    }
+    return tables.join('<p style="margin:8px 0"><br></p>');
   };
 
   const normalized = source.replace(/^(?:\u200B|\u200C|\u200D|\u200E|\u200F|\uFEFF)/u, "");
@@ -63,8 +73,12 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
   if (compactHtml.length < 19_950) return compactHtml;
 
   const readableHtml = compactHtml
-    .replace(/<(h[3-6]|span|code)([^>]*)\sstyle="[^"]*"/gi, "<$1$2");
+    .replace(/<(span|code)([^>]*)\sstyle="[^"]*"/gi, "<$1$2");
   if (readableHtml.length < 19_950) return readableHtml;
+
+  const essentialHtml = readableHtml
+    .replace(/<(h[3-6])([^>]*)\sstyle="[^"]*"/gi, "<$1$2");
+  if (essentialHtml.length < 19_950) return essentialHtml;
 
   // Extremely long source documents still keep all text and semantic tags.
   // Only decorative inline styles are removed as a final attempt to satisfy
@@ -92,9 +106,7 @@ function compactWechatHtml(html: string, theme: MarkdownTheme) {
     .replace(/<([a-z0-9]+)([^>]*) style="([^"]*)"/gi, (_full, rawTag: string, attributes: string, originalStyle: string) => {
       const tag = rawTag.toLowerCase();
       let style = styles[tag];
-      if (tag === "section" && originalStyle.includes("background:#f4f7f5")) {
-        style = "padding:10px;border-radius:6px;background:#f4f7f5";
-      } else if (tag === "section" && originalStyle.includes("background:")) {
+      if (tag === "section" && originalStyle.includes("background:")) {
         style = `background:${theme.bg};color:#3f4943;font-size:16px;line-height:1.8`;
       }
       return `<${rawTag}${attributes}${style ? ` style="${style}"` : ""}`;
