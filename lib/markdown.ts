@@ -44,14 +44,13 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
     return `<img src="${escapeHtml(safe)}" alt="${escapeHtml(text || "正文图片")}"${title ? ` title="${escapeHtml(title)}"` : ""} style="display:block;width:100%;height:auto;margin:18px auto;border-radius:4px;" />`;
   };
   renderer.table = ({ header, rows }) => {
-    const renderCell = (cell: (typeof header)[number], heading = false) => {
-      const tag = heading ? "th" : "td";
-      const align = cell.align ? `text-align:${cell.align};` : "";
-      return `<${tag} style="padding:8px 9px;border:1px solid #dfe4e1;${align}${heading ? `color:${theme.color};background:#edf3ef;font-weight:700;` : "color:#465149;"}font-size:13px;line-height:1.6;">${inline(cell.tokens)}</${tag}>`;
-    };
-    const head = `<tr>${header.map((cell) => renderCell(cell, true)).join("")}</tr>`;
-    const body = rows.map((row) => `<tr>${row.map((cell) => renderCell(cell)).join("")}</tr>`).join("");
-    return `<section style="margin:18px 0;overflow-x:auto;"><table style="width:100%;border-collapse:collapse;table-layout:auto;">${head}${body}</table></section>`;
+    const labels = header.map((cell) => inline(cell.tokens).replace(/<[^>]+>/g, "").trim());
+    const cards = rows.map((row) => {
+      const primary = inline(row[0]?.tokens ?? []);
+      const details = row.slice(1).map((cell, index) => `<br><b>${labels[index + 1] || `字段 ${index + 2}`}：</b>${inline(cell.tokens)}`).join("");
+      return `<p><b>▌ ${primary}</b>${details}</p>`;
+    }).join("");
+    return `<section style="margin:18px 0;">${cards}</section>`;
   };
 
   const normalized = source.replace(/^(?:\u200B|\u200C|\u200D|\u200E|\u200F|\uFEFF)/u, "");
@@ -76,23 +75,18 @@ function compactWechatHtml(html: string, theme: MarkdownTheme) {
     h4: `color:${theme.color}`,
     h5: `color:${theme.color}`,
     h6: `color:${theme.color}`,
-    p: "line-height:1.8",
     blockquote: `padding:10px;border-left:3px solid ${theme.color};background:#edf2ee`,
     pre: "padding:10px;overflow:auto;background:#16251e;color:#fff",
     code: "word-break:break-all",
-    hr: "border:0;border-top:1px solid #ddd",
-    table: "width:100%;border-collapse:collapse;font-size:12px",
     a: `color:${theme.color}`,
-    img: "width:100%;height:auto",
-    ul: "padding-left:20px",
-    ol: "padding-left:20px",
+    img: "display:block;width:100%;height:auto;margin:18px auto",
   };
 
   return html
     .replace(/<([a-z0-9]+)([^>]*) style="([^"]*)"/gi, (_full, rawTag: string, attributes: string, originalStyle: string) => {
       const tag = rawTag.toLowerCase();
       const style = tag === "section" && originalStyle.includes("background:")
-        ? `background:${theme.bg}`
+        ? `background:${theme.bg};color:#3f4943;font-size:16px;line-height:1.8`
         : styles[tag];
       return `<${rawTag}${attributes}${style ? ` style="${style}"` : ""}`;
     })
