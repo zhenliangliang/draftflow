@@ -25,9 +25,9 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
     if (depth === 2) return `<h2 style="margin:28px 0 14px;padding-left:12px;border-left:4px solid ${theme.color};color:${theme.color};font-size:21px;line-height:1.5;font-weight:700;">${content}</h2>`;
     return `<h${depth} style="margin:22px 0 10px;color:${theme.color};font-size:${Math.max(15, 20 - depth)}px;line-height:1.5;font-weight:700;">${content}</h${depth}>`;
   };
-  renderer.paragraph = ({ tokens }) => `<p style="margin:0 0 14px;color:#3f4943;font-size:16px;line-height:1.9;text-align:left;letter-spacing:normal;word-break:normal;overflow-wrap:break-word;">${inline(tokens)}</p>`;
-  renderer.blockquote = ({ tokens }) => `<blockquote style="margin:18px 0;padding:14px 16px;border-left:3px solid ${theme.color};border-radius:4px;color:#5c6961;background:#edf2ee;font-size:15px;line-height:1.9;">${block(tokens)}</blockquote>`;
-  renderer.code = ({ text, lang }) => `<div style="margin:18px 0;overflow:hidden;border:1px solid #2e4138;border-radius:7px;background:#17251f;"><small style="display:block;padding:7px 12px;color:#b8c6be;background:#25372f;font-size:11px;line-height:1;letter-spacing:.08em;">${escapeHtml((lang || "CODE").toUpperCase())}</small><pre style="margin:0;padding:14px;overflow:auto;color:#ecf3ef;background:#17251f;font-size:12px;line-height:1.7;white-space:pre-wrap;word-break:break-word;"><code data-language="${escapeHtml(lang || "text")}">${escapeHtml(text)}</code></pre></div>`;
+  renderer.paragraph = ({ tokens }) => `<p style="margin:0 0 14px;color:#3f4943;font-size:14px;line-height:1.8;text-align:left;letter-spacing:normal;word-break:normal;overflow-wrap:break-word;">${inline(tokens)}</p>`;
+  renderer.blockquote = ({ tokens }) => `<blockquote style="margin:18px 0;padding:14px 16px;border-left:3px solid ${theme.color};border-radius:4px;color:#5c6961;background:#edf2ee;font-size:14px;line-height:1.8;">${block(tokens)}</blockquote>`;
+  renderer.code = ({ text, lang }) => `<div style="margin:18px 0;overflow:hidden;border:1px solid #2e4138;border-radius:7px;background:#17251f;"><small style="display:block;padding:7px 12px;color:#b8c6be;background:#25372f;font-size:11px;line-height:1;letter-spacing:.08em;">${escapeHtml((lang || "CODE").toUpperCase())}</small><p data-code-body style="margin:0;padding:14px;color:#ecf3ef;background:#17251f;font-family:monospace;font-size:12px;line-height:1.7;word-break:break-word;overflow-wrap:anywhere;">${renderWechatCode(text)}</p></div>`;
   renderer.codespan = ({ text }) => `<code style="margin:0 2px;padding:2px 5px;border-radius:3px;color:#a23f35;background:#f5eeeb;font-family:monospace;font-size:14px;letter-spacing:normal;white-space:normal;word-break:break-all;">${escapeHtml(addSoftBreaks(text))}</code>`;
   renderer.hr = () => `<hr style="height:1px;margin:26px 0;border:0;background:#dfe5e1;" />`;
   renderer.strong = ({ tokens }) => `<strong style="color:#243129;font-weight:750;">${inline(tokens)}</strong>`;
@@ -37,7 +37,7 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
   renderer.list = ({ ordered, start, items }) => {
     const tag = ordered ? "ol" : "ul";
     const startAttr = ordered && start !== 1 ? ` start="${Number(start)}"` : "";
-    return `<${tag}${startAttr} style="margin:12px 0 18px;padding-left:24px;color:#3f4943;font-size:16px;line-height:1.9;">${items.map((item) => renderer.listitem(item)).join("")}</${tag}>`;
+    return `<${tag}${startAttr} style="margin:12px 0 18px;padding-left:24px;color:#3f4943;font-size:14px;line-height:1.8;">${items.map((item) => renderer.listitem(item)).join("")}</${tag}>`;
   };
   renderer.listitem = ({ tokens }) => `<li style="margin:5px 0;">${block(tokens).replace(/^<p[^>]*>|<\/p>\n?$/g, "")}</li>`;
   renderer.link = ({ href, title, tokens }) => {
@@ -55,8 +55,8 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
   renderer.table = ({ header, rows }) => {
     const renderTable = (indexes: number[]) => {
       const firstColumnWidth = indexes.length === 2 ? "32%" : "34%";
-      const head = indexes.map((index, position) => `<th${position === 0 ? ` width="${firstColumnWidth}"` : ""} bgcolor="#edf3ef" style="padding:7px;text-align:left;vertical-align:top;color:${theme.color};font-size:13px;line-height:1.55;word-break:normal;overflow-wrap:anywhere;">${inline(header[index].tokens)}</th>`).join("");
-      const body = rows.map((row) => `<tr>${indexes.map((index) => `<td style="padding:7px;vertical-align:top;color:#3f4943;font-size:13px;line-height:1.65;word-break:normal;overflow-wrap:anywhere;">${inline(row[index]?.tokens ?? [])}</td>`).join("")}</tr>`).join("");
+      const head = indexes.map((index, position) => `<th${position === 0 ? ` width="${firstColumnWidth}"` : ""} bgcolor="#edf3ef" style="padding:7px;text-align:left;vertical-align:top;color:${theme.color};font-size:14px;line-height:1.6;word-break:normal;overflow-wrap:anywhere;">${inline(header[index].tokens)}</th>`).join("");
+      const body = rows.map((row) => `<tr>${indexes.map((index) => `<td style="padding:7px;vertical-align:top;color:#3f4943;font-size:14px;line-height:1.7;word-break:normal;overflow-wrap:anywhere;">${inline(row[index]?.tokens ?? [])}</td>`).join("")}</tr>`).join("");
       return `<table width="100%" border="1" bordercolor="#dfe4e1" cellspacing="0" cellpadding="0" style="width:100%;margin:12px 0;border-collapse:collapse;table-layout:fixed;"><tr>${head}</tr>${body}</table>`;
     };
 
@@ -66,17 +66,17 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
     // more than two columns makes Chinese text break every few characters.
     // Convert each wide row into "identifier + details": it remains a real
     // table, does not duplicate rows, and stays readable on both phone and web.
-    const head = `<th width="28%" bgcolor="#edf3ef" style="padding:7px;text-align:left;vertical-align:top;color:${theme.color};font-size:13px;line-height:1.55;">${inline(header[0].tokens)}</th><th bgcolor="#edf3ef" style="padding:7px;text-align:left;vertical-align:top;color:${theme.color};font-size:13px;line-height:1.55;">详情</th>`;
+    const head = `<th width="28%" bgcolor="#edf3ef" style="padding:7px;text-align:left;vertical-align:top;color:${theme.color};font-size:14px;line-height:1.6;">${inline(header[0].tokens)}</th><th bgcolor="#edf3ef" style="padding:7px;text-align:left;vertical-align:top;color:${theme.color};font-size:14px;line-height:1.6;">详情</th>`;
     const body = rows.map((row) => {
       const details = header.slice(1).map((cell, offset) => `<b style="color:${theme.color};font-weight:700;">${inline(cell.tokens)}：</b>${inline(row[offset + 1]?.tokens ?? [])}`).join('<br><span style="display:block;height:5px;"></span>');
-      return `<tr><td style="padding:7px;vertical-align:top;color:#3f4943;font-size:13px;line-height:1.65;word-break:normal;overflow-wrap:anywhere;">${inline(row[0]?.tokens ?? [])}</td><td style="padding:7px;vertical-align:top;color:#3f4943;font-size:13px;line-height:1.65;word-break:normal;overflow-wrap:anywhere;">${details}</td></tr>`;
+      return `<tr><td style="padding:7px;vertical-align:top;color:#3f4943;font-size:14px;line-height:1.7;word-break:normal;overflow-wrap:anywhere;">${inline(row[0]?.tokens ?? [])}</td><td style="padding:7px;vertical-align:top;color:#3f4943;font-size:14px;line-height:1.7;word-break:normal;overflow-wrap:anywhere;">${details}</td></tr>`;
     }).join("");
     return `<table width="100%" border="1" bordercolor="#dfe4e1" cellspacing="0" cellpadding="0" style="width:100%;margin:12px 0;border-collapse:collapse;table-layout:fixed;"><tr>${head}</tr>${body}</table>`;
   };
 
   const normalized = source.replace(/^(?:\u200B|\u200C|\u200D|\u200E|\u200F|\uFEFF)/u, "");
   const html = marked.parse(normalized, { renderer, gfm: true, breaks: false, async: false }) as string;
-  const richHtml = `<section style="padding:4px 0;background:${theme.bg};">${html}</section>`;
+  const richHtml = `<section style="padding:4px 0;color:#3f4943;background:${theme.bg};font-size:14px;line-height:1.8;">${html}</section>`;
   if (richHtml.length < 19_950) return richHtml;
 
   const compactHtml = compactWechatHtml(richHtml, theme);
@@ -102,22 +102,26 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
   const unstyledHtml = compactHtml
     .replace(/\sstyle="[^"]*"/gi, "")
     .replace(/<span>([\s\S]*?)<\/span>/gi, "$1")
+    .replace(/<strong>/gi, "<b>")
+    .replace(/<\/strong>/gi, "</b>")
     .replace(/<br>\s*<br>/gi, "<br>");
   const compatibleHtml = unstyledHtml
-    .replace(/<table([^>]*)>/gi, '<table$1 style="table-layout:fixed">');
+    .replace(/<section>/i, '<section style="color:#3f4943;font-size:14px;line-height:1.8">')
+    .replace(/<p>/gi, '<p style="font-size:14px;line-height:1.8">')
+    .replace(/<table([^>]*)>/gi, '<table$1 style="font-size:14px;line-height:1.7;table-layout:fixed">');
 
   const structuredHtml = compatibleHtml
     .replace(/<h2>/gi, `<h2 style="margin:26px 0 14px;padding-left:8px;border-left:3px solid ${theme.color};color:${theme.color};font-size:20px">`)
-    .replace(/<h3>([^<]*)<\/h3>\s*(?=<(?:pre|div><small)>)/gi, `<h3 style="margin:20px 0 9px;color:${theme.color};font-size:17px">$1</h3>`);
+    .replace(/<h3>([^<]*)<\/h3>\s*(?=<div><small>)/gi, `<h3 style="margin:20px 0 9px;color:${theme.color};font-size:17px">$1</h3>`);
   const polishedHtml = structuredHtml
     .replace(/<div><small>/gi, '<div style="margin:18px 0;overflow:hidden;border:1px solid #2e4138;border-radius:7px;background:#17251f"><small style="display:block;padding:7px 12px;color:#b8c6be;background:#25372f;font-size:11px;letter-spacing:.08em">')
-    .replace(/<pre>/gi, '<pre style="margin:0;padding:14px;color:#ecf3ef;background:#17251f;font-size:12px;line-height:1.7;white-space:pre-wrap;word-break:break-word">')
+    .replace(/<p data-code-body>/gi, '<p data-code-body style="margin:0;padding:14px;color:#ecf3ef;background:#17251f;font-family:monospace;font-size:12px;line-height:1.7;word-break:break-word">')
     .replace(/<code>/gi, '<code style="padding:2px 4px;border-radius:3px;color:#a23f35;background:#f5eeeb">');
   if (polishedHtml.length < 19_950) return polishedHtml;
 
   const codeFirstHtml = compatibleHtml
     .replace(/<div><small>/gi, '<div style="overflow:hidden;background:#17251f"><small style="display:block;padding:6px 10px;color:#b8c6be;background:#25372f">')
-    .replace(/<pre>/gi, '<pre style="margin:0;padding:14px;color:#ecf3ef;background:#17251f;font-size:12px;line-height:1.7;white-space:pre-wrap;word-break:break-word">')
+    .replace(/<p data-code-body>/gi, '<p data-code-body style="margin:0;padding:12px;color:#ecf3ef;background:#17251f;font-family:monospace;font-size:12px;line-height:1.7;word-break:break-word">')
     .replace(/<code>/gi, '<code style="padding:2px 4px;color:#a23f35;background:#f5eeeb">');
   return codeFirstHtml.length < 19_950 ? codeFirstHtml : compatibleHtml;
 }
@@ -166,15 +170,15 @@ function compactWechatHtml(html: string, theme: MarkdownTheme) {
     h4: `color:${theme.color}`,
     h5: `color:${theme.color}`,
     h6: `color:${theme.color}`,
-    p: "margin:0 0 14px",
+    p: "margin:0 0 14px;font-size:14px;line-height:1.8",
     blockquote: `padding:10px;border-left:3px solid ${theme.color};background:#edf2ee`,
     pre: "padding:10px;overflow:auto;background:#16251e;color:#fff;white-space:pre-wrap;word-break:break-word",
     code: "word-break:break-all",
     span: `color:${theme.color};text-decoration:underline;word-break:break-all`,
     img: "display:block;width:100%;height:auto;margin:18px auto",
     table: "width:100%;margin:12px 0;border-collapse:collapse;table-layout:fixed",
-    th: `padding:7px;text-align:left;vertical-align:top;color:${theme.color};font-size:13px;line-height:1.55;word-break:normal;overflow-wrap:anywhere`,
-    td: "padding:7px;vertical-align:top;color:#3f4943;font-size:13px;line-height:1.65;word-break:normal;overflow-wrap:anywhere",
+    th: `padding:7px;text-align:left;vertical-align:top;color:${theme.color};font-size:14px;line-height:1.6;word-break:normal;overflow-wrap:anywhere`,
+    td: "padding:7px;vertical-align:top;color:#3f4943;font-size:14px;line-height:1.7;word-break:normal;overflow-wrap:anywhere",
   };
 
   return html
@@ -182,7 +186,7 @@ function compactWechatHtml(html: string, theme: MarkdownTheme) {
       const tag = rawTag.toLowerCase();
       let style = styles[tag];
       if (tag === "section" && originalStyle.includes("background:")) {
-        style = `background:${theme.bg};color:#3f4943;font-size:16px;line-height:1.8`;
+        style = `background:${theme.bg};color:#3f4943;font-size:14px;line-height:1.8`;
       }
       return `<${rawTag}${attributes}${style ? ` style="${style}"` : ""}`;
     })
@@ -217,6 +221,14 @@ function safeImage(href: string) {
 
 function escapeHtml(value: string) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function renderWechatCode(value: string) {
+  return value.replace(/\r\n?/g, "\n").replace(/\n$/, "").split("\n").map((rawLine) => {
+    const line = rawLine.replace(/\t/g, "  ");
+    const indentLength = line.match(/^ */)?.[0].length ?? 0;
+    return `${"\u00A0".repeat(indentLength)}${escapeHtml(line.slice(indentLength))}`;
+  }).join("<br>");
 }
 
 function addSoftBreaks(value: string) {
