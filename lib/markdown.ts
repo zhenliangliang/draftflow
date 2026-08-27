@@ -36,7 +36,8 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
     const safe = safeLink(href);
     const content = inline(tokens);
     if (!safe) return content;
-    return `<a href="${escapeHtml(safe)}"${title ? ` title="${escapeHtml(title)}"` : ""} style="color:${theme.color};text-decoration:underline;word-break:break-all;">${content}</a>`;
+    const label = title ? `${content}（${escapeHtml(title)}）` : content;
+    return `<span style="color:${theme.color};text-decoration:underline;word-break:break-all;">${label}</span>`;
   };
   renderer.image = ({ href, title, text }) => {
     const safe = safeImage(href);
@@ -48,18 +49,22 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
     const cards = rows.map((row) => {
       const primary = inline(row[0]?.tokens ?? []);
       const details = row.slice(1).map((cell, index) => `<br><b>${labels[index + 1] || `字段 ${index + 2}`}：</b>${inline(cell.tokens)}`).join("");
-      return `<p><b>▌ ${primary}</b>${details}</p>`;
+      return `<p style="margin:0 0 14px;"><b>▌ ${primary}</b>${details}</p>`;
     }).join("");
-    return `<section style="margin:18px 0;">${cards}</section>`;
+    return `<section style="margin:18px 0;padding:10px;border-radius:6px;background:#f4f7f5;">${cards}</section>`;
   };
 
   const normalized = source.replace(/^(?:\u200B|\u200C|\u200D|\u200E|\u200F|\uFEFF)/u, "");
   const html = marked.parse(normalized, { renderer, gfm: true, breaks: false, async: false }) as string;
   const richHtml = `<section style="padding:4px 0;background:${theme.bg};">${html}</section>`;
-  if (richHtml.length < 19_500) return richHtml;
+  if (richHtml.length < 19_950) return richHtml;
 
   const compactHtml = compactWechatHtml(richHtml, theme);
-  if (compactHtml.length < 19_500) return compactHtml;
+  if (compactHtml.length < 19_950) return compactHtml;
+
+  const readableHtml = compactHtml
+    .replace(/<(h[3-6]|span|code)([^>]*)\sstyle="[^"]*"/gi, "<$1$2");
+  if (readableHtml.length < 19_950) return readableHtml;
 
   // Extremely long source documents still keep all text and semantic tags.
   // Only decorative inline styles are removed as a final attempt to satisfy
@@ -75,19 +80,23 @@ function compactWechatHtml(html: string, theme: MarkdownTheme) {
     h4: `color:${theme.color}`,
     h5: `color:${theme.color}`,
     h6: `color:${theme.color}`,
+    p: "margin:0 0 14px",
     blockquote: `padding:10px;border-left:3px solid ${theme.color};background:#edf2ee`,
-    pre: "padding:10px;overflow:auto;background:#16251e;color:#fff",
+    pre: "padding:10px;overflow:auto;background:#16251e;color:#fff;white-space:pre-wrap;word-break:break-word",
     code: "word-break:break-all",
-    a: `color:${theme.color}`,
+    span: `color:${theme.color};text-decoration:underline;word-break:break-all`,
     img: "display:block;width:100%;height:auto;margin:18px auto",
   };
 
   return html
     .replace(/<([a-z0-9]+)([^>]*) style="([^"]*)"/gi, (_full, rawTag: string, attributes: string, originalStyle: string) => {
       const tag = rawTag.toLowerCase();
-      const style = tag === "section" && originalStyle.includes("background:")
-        ? `background:${theme.bg};color:#3f4943;font-size:16px;line-height:1.8`
-        : styles[tag];
+      let style = styles[tag];
+      if (tag === "section" && originalStyle.includes("background:#f4f7f5")) {
+        style = "padding:10px;border-radius:6px;background:#f4f7f5";
+      } else if (tag === "section" && originalStyle.includes("background:")) {
+        style = `background:${theme.bg};color:#3f4943;font-size:16px;line-height:1.8`;
+      }
       return `<${rawTag}${attributes}${style ? ` style="${style}"` : ""}`;
     })
     .replace(/<table style=/gi, '<table border="1" cellpadding="4" style=');
