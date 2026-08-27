@@ -37,9 +37,9 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
   renderer.list = ({ ordered, start, items }) => {
     const tag = ordered ? "ol" : "ul";
     const startAttr = ordered && start !== 1 ? ` start="${Number(start)}"` : "";
-    return `<${tag}${startAttr} style="margin:12px 0 18px;padding-left:24px;color:#3f4943;font-size:14px;line-height:1.8;">${items.map((item) => renderer.listitem(item)).join("")}</${tag}>`;
+    return `<${tag}${startAttr} style="margin:12px 0 18px;padding-left:24px;color:#3f4943;font-size:14px;line-height:1.8;text-align:left;letter-spacing:normal;word-spacing:0;">${items.map((item) => renderer.listitem(item)).join("")}</${tag}>`;
   };
-  renderer.listitem = ({ tokens }) => `<li style="margin:5px 0;">${block(tokens).replace(/^<p[^>]*>|<\/p>\n?$/g, "")}</li>`;
+  renderer.listitem = ({ tokens }) => `<li style="margin:5px 0;text-align:left;letter-spacing:normal;word-spacing:0;">${block(tokens).replace(/^<p[^>]*>|<\/p>\n?$/g, "")}</li>`;
   renderer.link = ({ href, title, tokens }) => {
     const safe = safeLink(href);
     const content = inline(tokens);
@@ -76,7 +76,7 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
 
   const normalized = source.replace(/^(?:\u200B|\u200C|\u200D|\u200E|\u200F|\uFEFF)/u, "");
   const html = marked.parse(normalized, { renderer, gfm: true, breaks: false, async: false }) as string;
-  const richHtml = `<section style="padding:4px 0;color:#3f4943;background:${theme.bg};font-size:14px;line-height:1.8;">${html}</section>`;
+  const richHtml = `<section style="padding:4px 0;color:#3f4943;background:${theme.bg};font-size:14px;line-height:1.8;text-align:left;letter-spacing:normal;word-spacing:0;">${html}</section>`;
   if (richHtml.length < 19_950) return richHtml;
 
   const compactHtml = compactWechatHtml(richHtml, theme);
@@ -106,7 +106,7 @@ export function markdownToWechatHtml(source: string, theme: MarkdownTheme) {
     .replace(/<\/strong>/gi, "</b>")
     .replace(/<br>\s*<br>/gi, "<br>");
   const compatibleHtml = unstyledHtml
-    .replace(/<section>/i, '<section style="color:#3f4943;font-size:14px;line-height:1.8">')
+    .replace(/<section>/i, '<section style="color:#3f4943;font-size:14px;line-height:1.8;text-align:left;letter-spacing:normal;word-spacing:0">')
     .replace(/<p>/gi, '<p style="font-size:14px;line-height:1.8">')
     .replace(/<table([^>]*)>/gi, '<table$1 style="font-size:14px;line-height:1.7;table-layout:fixed">');
 
@@ -186,7 +186,7 @@ function compactWechatHtml(html: string, theme: MarkdownTheme) {
       const tag = rawTag.toLowerCase();
       let style = styles[tag];
       if (tag === "section" && originalStyle.includes("background:")) {
-        style = `background:${theme.bg};color:#3f4943;font-size:14px;line-height:1.8`;
+        style = `background:${theme.bg};color:#3f4943;font-size:14px;line-height:1.8;text-align:left;letter-spacing:normal;word-spacing:0`;
       }
       return `<${rawTag}${attributes}${style ? ` style="${style}"` : ""}`;
     })
