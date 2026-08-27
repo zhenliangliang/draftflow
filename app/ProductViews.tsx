@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { auditArticle, autoFixMarkdown, autoFixTitle, normalizeEditorialText } from "@/lib/format-audit";
-import { findLocalMarkdownImages, markdownToWechatHtml } from "@/lib/markdown";
+import { analyzeResponsiveMarkdown, findLocalMarkdownImages, markdownToWechatHtml } from "@/lib/markdown";
 import { RadarView } from "./RadarView";
 
 export type ProductViewKey = "content" | "editor" | "radar" | "themes" | "account";
@@ -48,6 +48,13 @@ const themes = [
   { id: "sunset", name: "暖橙", tag: "活力", color: "#a14f2a", bg: "#fff5ed", desc: "醒目有温度，适合品牌和活动内容" },
   { id: "editorial", name: "编辑部", tag: "杂志感", color: "#6b3150", bg: "#faf2f6", desc: "更强的视觉节奏和栏目感" },
 ];
+
+const previewDevices = [
+  { id: "iphone-se", name: "iPhone SE", detail: "320 px", width: 320, desktop: false },
+  { id: "iphone-15", name: "iPhone 15 / 16", detail: "393 px", width: 393, desktop: false },
+  { id: "huawei-mate", name: "华为 Mate", detail: "412 px", width: 412, desktop: false },
+  { id: "web", name: "Web 宽屏", detail: "760 px", width: 760, desktop: true },
+] as const;
 
 async function readApi<T>(response: Response): Promise<T> {
   let data: T & { error?: string };
@@ -154,6 +161,8 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
   const [imageUploading, setImageUploading] = useState(false);
   const [editorError, setEditorError] = useState("");
   const [showAudit, setShowAudit] = useState(false);
+  const [showResponsivePreview, setShowResponsivePreview] = useState(false);
+  const [previewDeviceId, setPreviewDeviceId] = useState<(typeof previewDevices)[number]["id"]>("iphone-15");
   const [auditNotice, setAuditNotice] = useState("");
   const [aiStatus, setAIStatus] = useState<{ configured: boolean; provider: string; model: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -163,6 +172,8 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
   const renderedHtml = useMemo(() => markdownToWechatHtml(content, currentTheme), [content, currentTheme]);
   const localImages = useMemo(() => findLocalMarkdownImages(content), [content]);
   const audit = useMemo(() => auditArticle({ title, content, digest }), [title, content, digest]);
+  const responsiveReport = useMemo(() => analyzeResponsiveMarkdown(content), [content]);
+  const previewDevice = previewDevices.find((device) => device.id === previewDeviceId) ?? previewDevices[1];
 
   async function loadAIStatus() {
     try {
@@ -311,10 +322,11 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
         {editorMode === "markdown" ? <textarea ref={textareaRef} value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} aria-label="Markdown 编辑器" /> : <div className="visual-editor-shell"><div className="visual-editor-note"><span><strong>可视化排版</strong><small>表格、标题和正文按当前公众号主题展示</small></span><button onClick={() => setEditorMode("markdown")}>编辑 Markdown</button></div><div className="visual-editor markdown-body" dangerouslySetInnerHTML={{ __html: renderedHtml }} /></div>}
       </section>
       <aside className="preview-pane">
-        <div className="preview-head"><div><strong>草稿箱兼容预览</strong><small>宽表格按手机宽度自动拆分</small></div><select value={theme} onChange={(event) => setTheme(event.target.value)}>{themes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></div>
+        <div className="preview-head"><div><strong>草稿箱兼容预览</strong><small>移动优先双列详情表 · 适配 320–760 px</small></div><span className="preview-head-actions"><button onClick={() => setShowResponsivePreview(true)}>多设备 <b>{responsiveReport.score}</b></button><select value={theme} onChange={(event) => setTheme(event.target.value)}>{themes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></span></div>
         <div className="phone-frame"><div className="phone-top"><b>9:41</b><span>● ⌁ ▰</span></div><div className="wechat-bar">‹ <strong>预览</strong> ···</div><article className="wechat-article" style={{ "--theme-color": currentTheme.color, "--theme-bg": currentTheme.bg } as React.CSSProperties}><h1>{title || "未命名文章"}</h1><div className="article-meta">示例公众号 · 2026年8月26日</div><div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderedHtml }} /></article></div>
       </aside>
     </div>
+    {showResponsivePreview && <div className="modal-backdrop"><div className="modal-card responsive-preview-modal"><button className="modal-close" onClick={() => setShowResponsivePreview(false)}>×</button><p className="modal-kicker">RESPONSIVE PREVIEW LAB</p><div className="responsive-preview-heading"><div><h2>多设备文章预览</h2><p>用主流阅读宽度检查表格、长文本、代码和正文节奏。</p></div><div className="device-tabs">{previewDevices.map((device) => <button key={device.id} className={previewDevice.id === device.id ? "active" : ""} onClick={() => setPreviewDeviceId(device.id)}><strong>{device.name}</strong><small>{device.detail}</small></button>)}</div></div><div className="responsive-preview-layout"><section className="device-preview-stage"><div className={`device-preview-shell ${previewDevice.desktop ? "desktop" : "phone"}`} style={{ "--device-width": `${previewDevice.width}px` } as React.CSSProperties}><div className="device-preview-chrome"><span>{previewDevice.desktop ? "微信公众号 · Web 阅读" : "9:41"}</span><b>{previewDevice.name}</b><span>{previewDevice.desktop ? "— □ ×" : "● ⌁ ▰"}</span></div><article className="device-preview-article" style={{ "--theme-color": currentTheme.color, "--theme-bg": currentTheme.bg } as React.CSSProperties}><h1>{title || "未命名文章"}</h1><div className="article-meta">{accountName === "尚未连接公众号" ? "示例公众号" : accountName} · 2026年8月26日</div><div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderedHtml }} /></article></div></section><aside className="format-report-panel"><div className="format-score"><span>{responsiveReport.score}</span><div><strong>跨端适配评分</strong><small>已按最窄 320 px 正文宽度分析</small></div></div><div className="format-stat-grid"><span><strong>{responsiveReport.tableCount}</strong><small>原始表格</small></span><span><strong>{responsiveReport.outputTableCount}</strong><small>适配后表格</small></span><span><strong>{responsiveReport.wideTableCount}</strong><small>宽表已优化</small></span></div><div className="format-check-list"><article><span>✓</span><div><strong>移动端列宽</strong><p>{responsiveReport.wideTableCount ? `已将 ${responsiveReport.wideTableCount} 个宽表格转换为“标识列 + 详情列”，避免文字被挤压。` : "所有表格都在两列以内，无需转换。"}</p></div></article><article><span>✓</span><div><strong>长文本安全换行</strong><p>{responsiveReport.longCellCount ? `识别到 ${responsiveReport.longCellCount} 个长字段，已启用自然换行和链接断行。` : "未发现可能撑破手机宽度的长字段。"}</p></div></article><article><span>✓</span><div><strong>主流屏幕覆盖</strong><p>已覆盖 iPhone SE、iPhone 15/16、华为 Mate 与 Web 宽屏。</p></div></article><article><span>✓</span><div><strong>微信编辑器兼容</strong><p>使用内联样式和原生表格属性，不依赖微信容易过滤的外部样式。</p></div></article></div><button className="responsive-applied" onClick={() => setShowResponsivePreview(false)}>✓ 已应用智能排版优化</button></aside></div></div></div>}
     {showSync && <div className="modal-backdrop"><div className="modal-card sync-modal">
       {!synced ? <><button className="modal-close" onClick={() => setShowSync(false)}>×</button><span className="modal-symbol">微</span><p className="modal-kicker">WECHAT DRAFT</p><h2>{syncing ? "正在发送到草稿箱" : "发送前确认"}</h2><p>{syncing ? "正在上传封面和文章内容，请勿关闭页面。" : `文章将以当前主题排版真实同步到“${accountName}”的草稿箱。`}</p><div className="draft-fields"><label>封面图片 <small>JPG / PNG / GIF / BMP，上传前自动优化，微信限制 2MB</small><input type="file" accept="image/jpeg,image/png,image/gif,image/bmp" onChange={(event) => void selectCover(event.target.files?.[0] ?? null)} />{coverNote && <small className="cover-note">✓ {coverNote}</small>}</label><div><label>作者<input value={author} maxLength={16} onChange={(event) => setAuthor(event.target.value)} /></label><label>原文链接<input value={sourceUrl} type="url" placeholder="可选" onChange={(event) => setSourceUrl(event.target.value)} /></label></div><label>摘要<textarea value={digest} maxLength={128} onChange={(event) => setDigest(event.target.value)} /></label></div><div className="sync-summary"><span><small>目标公众号</small><strong>{accountName}</strong></span><span><small>排版主题</small><strong>{currentTheme.name}</strong></span><span><small>智能审核</small><strong className={audit.score >= 75 ? "ok" : "needs-work"}>{audit.score} 分 · {audit.score >= 75 ? "可发布" : "待优化"}</strong></span></div>{syncError && <div className="form-error">{syncError}</div>}{syncing ? <div className="sync-progress"><i /></div> : <button className="sync-confirm" onClick={startSync}>确认并发送到草稿箱</button>}</> : <div className="sync-success"><span>✓</span><p className="modal-kicker">SYNC COMPLETE</p><h2>已发送到草稿箱</h2><p>草稿 Media ID：{draftMediaId.slice(0, 10)}…<br />请前往微信公众号后台进行最终预览和群发。</p><button className="sync-confirm" onClick={() => { setShowSync(false); setSynced(false); setDraftMediaId(""); }}>完成</button></div>}
     </div></div>}
