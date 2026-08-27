@@ -137,6 +137,7 @@ function ContentView({ onEdit }: { onEdit: () => void }) {
 function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: ImportedMarkdownDraft | null; onImportMarkdown: () => void }) {
   const [title, setTitle] = useState(importedDraft?.title || "为什么内容团队需要一套公众号工作台？");
   const [content, setContent] = useState(importedDraft?.content || sampleMarkdown);
+  const [editorMode, setEditorMode] = useState<"visual" | "markdown">(importedDraft ? "visual" : "markdown");
   const [theme, setTheme] = useState("minimal");
   const [showSync, setShowSync] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -299,14 +300,18 @@ function EditorView({ importedDraft, onImportMarkdown }: { importedDraft: Import
     <div className="editor-grid">
       <section className="writing-pane">
         <input className="title-input" value={title} onChange={(event) => setTitle(event.target.value)} aria-label="文章标题" />
-        <div className="format-bar"><button>H1</button><button>H2</button><button><b>B</b></button><button><i>I</i></button><button>“ ”</button><button>— 列表</button><button>链接</button><button onClick={() => bodyImageInputRef.current?.click()} disabled={imageUploading}>{imageUploading ? "上传中" : "图片"}</button><input ref={bodyImageInputRef} className="hidden-file" type="file" accept="image/jpeg,image/png" onChange={(event) => void uploadBodyImage(event.target.files?.[0] ?? null)} /><span /><small>Markdown</small></div>
+        <div className={`format-bar ${editorMode === "visual" ? "visual" : ""}`}>
+          <div className="format-actions" aria-hidden={editorMode === "visual"}><button disabled={editorMode === "visual"}>H1</button><button disabled={editorMode === "visual"}>H2</button><button disabled={editorMode === "visual"}><b>B</b></button><button disabled={editorMode === "visual"}><i>I</i></button><button disabled={editorMode === "visual"}>“ ”</button><button disabled={editorMode === "visual"}>— 列表</button><button disabled={editorMode === "visual"}>链接</button><button onClick={() => bodyImageInputRef.current?.click()} disabled={editorMode === "visual" || imageUploading}>{imageUploading ? "上传中" : "图片"}</button></div>
+          <input ref={bodyImageInputRef} className="hidden-file" type="file" accept="image/jpeg,image/png" onChange={(event) => void uploadBodyImage(event.target.files?.[0] ?? null)} />
+          <div className="editor-mode-switch" aria-label="编辑器显示模式"><button className={editorMode === "visual" ? "active" : ""} aria-pressed={editorMode === "visual"} onClick={() => setEditorMode("visual")}>可视化</button><button className={editorMode === "markdown" ? "active" : ""} aria-pressed={editorMode === "markdown"} onClick={() => setEditorMode("markdown")}>Markdown</button></div>
+        </div>
         {importedDraft && <div className="import-notice success">已导入 <strong>{importedDraft.fileName}</strong>，标题和 Markdown 正文已自动识别。</div>}
-        {localImages.length > 0 && <div className="import-notice warning">检测到 {localImages.length} 张本地图片。浏览器无法直接读取 MD 文件旁的图片，请点击上方“图片”逐张上传并替换。</div>}
+        {localImages.length > 0 && <div className="import-notice warning">检测到 {localImages.length} 张本地图片。浏览器无法直接读取 MD 文件旁的图片，请切换到 Markdown 模式，点击上方“图片”逐张上传并替换。</div>}
         {editorError && <div className="editor-error">{editorError}</div>}
-        <textarea ref={textareaRef} value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} aria-label="Markdown 编辑器" />
+        {editorMode === "markdown" ? <textarea ref={textareaRef} value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} aria-label="Markdown 编辑器" /> : <div className="visual-editor-shell"><div className="visual-editor-note"><span><strong>可视化排版</strong><small>表格、标题和正文按当前公众号主题展示</small></span><button onClick={() => setEditorMode("markdown")}>编辑 Markdown</button></div><div className="visual-editor markdown-body" dangerouslySetInnerHTML={{ __html: renderedHtml }} /></div>}
       </section>
       <aside className="preview-pane">
-        <div className="preview-head"><div><strong>草稿箱兼容预览</strong><small>宽表格自动转换为移动端卡片</small></div><select value={theme} onChange={(event) => setTheme(event.target.value)}>{themes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></div>
+        <div className="preview-head"><div><strong>草稿箱兼容预览</strong><small>宽表格按手机宽度自动拆分</small></div><select value={theme} onChange={(event) => setTheme(event.target.value)}>{themes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></div>
         <div className="phone-frame"><div className="phone-top"><b>9:41</b><span>● ⌁ ▰</span></div><div className="wechat-bar">‹ <strong>预览</strong> ···</div><article className="wechat-article" style={{ "--theme-color": currentTheme.color, "--theme-bg": currentTheme.bg } as React.CSSProperties}><h1>{title || "未命名文章"}</h1><div className="article-meta">示例公众号 · 2026年8月26日</div><div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderedHtml }} /></article></div>
       </aside>
     </div>
