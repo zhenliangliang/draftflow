@@ -39,3 +39,11 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /work/
+/uploads/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+
+# locally generated article cover assets
+/public/covers/

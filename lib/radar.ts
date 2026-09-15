@@ -15,6 +15,30 @@ export type RadarArticle = {
   created_at: string;
 };
 
+export type RadarStyleProfile = {
+  id: string;
+  sourceId: string;
+  sourceName: string;
+  summary: string;
+  audience: string;
+  contentFocus: string[];
+  tone: string[];
+  titlePatterns: string[];
+  openingPatterns: string[];
+  structurePatterns: string[];
+  reasoningPatterns: string[];
+  languageTraits: string[];
+  pacing: string;
+  endingPatterns: string[];
+  doRules: string[];
+  avoidRules: string[];
+  sampleArticleIds: string[];
+  sampleCount: number;
+  updatedAt: string;
+};
+
+export type StyleProfileInput = Omit<RadarStyleProfile, "id" | "sampleArticleIds" | "sampleCount" | "updatedAt">;
+
 export async function ensureRadarSchema() {
   const { DB } = getRuntimeEnv();
   await DB.batch([
@@ -56,7 +80,38 @@ export async function ensureRadarSchema() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
     DB.prepare("CREATE INDEX IF NOT EXISTS idx_content_recommendations_created_at ON content_recommendations(created_at)"),
+    DB.prepare(`CREATE TABLE IF NOT EXISTS radar_style_profiles (
+      id TEXT PRIMARY KEY NOT NULL,
+      source_id TEXT NOT NULL UNIQUE,
+      source_name TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      audience TEXT NOT NULL,
+      content_focus_json TEXT NOT NULL,
+      tone_json TEXT NOT NULL,
+      title_patterns_json TEXT NOT NULL,
+      opening_patterns_json TEXT NOT NULL,
+      structure_patterns_json TEXT NOT NULL,
+      reasoning_patterns_json TEXT NOT NULL,
+      language_traits_json TEXT NOT NULL,
+      pacing TEXT NOT NULL,
+      ending_patterns_json TEXT NOT NULL,
+      do_rules_json TEXT NOT NULL,
+      avoid_rules_json TEXT NOT NULL,
+      sample_article_ids_json TEXT NOT NULL,
+      sample_count INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_radar_style_profiles_source_id ON radar_style_profiles(source_id)"),
+    DB.prepare("CREATE INDEX IF NOT EXISTS idx_radar_style_profiles_updated_at ON radar_style_profiles(updated_at)"),
   ]);
+  const orphaned = await DB.prepare(`SELECT DISTINCT source_name FROM radar_articles
+    WHERE source_id IS NULL AND TRIM(source_name) <> '' LIMIT 100`).all<{ source_name: string }>();
+  for (const row of orphaned.results) {
+    const source = await resolveArticleSource(undefined, row.source_name);
+    await DB.prepare("UPDATE radar_articles SET source_id = ? WHERE source_id IS NULL AND source_name = ?")
+      .bind(source.id, row.source_name).run();
+  }
   await DB.prepare("PRAGMA optimize").run();
 }
 
@@ -92,13 +147,11 @@ export async function importWechatArticle(input: { url: string; sourceId?: strin
   const html = await response.text();
   const title = readMeta(html, "og:title") || readTag(html, "title");
   const digest = readMeta(html, "og:description") || readMeta(html, "description");
-  const detectedSource = readMeta(html, "og:article:author") || readScriptValue(html, "nickname") || "微信公众号";
-  const source = input.sourceId
-    ? await getRuntimeEnv().DB.prepare("SELECT id, name FROM content_sources WHERE id = ?").bind(input.sourceId).first<{ id: string; name: string }>()
-    : null;
+  const detectedSource = decodeHtml(readScriptValue(html, "nickname") || readMeta(html, "og:article:author") || "微信公众号");
+  const source = await resolveArticleSource(input.sourceId, detectedSource);
   if (!title) throw new WechatApiError(-1102, "没有识别到文章标题，请确认链接可以公开访问");
 
-  const excerpt = extractArticleText(html).slice(0, 6000);
+  const excerpt = extractArticleText(html).slice(0, 12000);
   const publishedAt = readPublishTime(html);
   const readCount = Math.max(0, Math.round(input.readCount ?? 0));
   const likeCount = Math.max(0, Math.round(input.likeCount ?? 0));
@@ -113,8 +166,83 @@ export async function importWechatArticle(input: { url: string; sourceId?: strin
     title = excluded.title, digest = excluded.digest, content_excerpt = excluded.content_excerpt,
     published_at = excluded.published_at, read_count = excluded.read_count,
     like_count = excluded.like_count, hot_score = excluded.hot_score`)
-    .bind(id, source?.id ?? null, source?.name ?? detectedSource, decodeHtml(title), url, decodeHtml(digest), excerpt, publishedAt, readCount, likeCount, hotScore).run();
-  return { title: decodeHtml(title), sourceName: source?.name ?? detectedSource, hotScore };
+    .bind(id, source.id, source.name, decodeHtml(title), url, decodeHtml(digest), excerpt, publishedAt, readCount, likeCount, hotScore).run();
+  return { title: decodeHtml(title), sourceName: source.name, sourceId: source.id, hotScore };
+}
+
+export async function listStyleProfiles(): Promise<RadarStyleProfile[]> {
+  await ensureRadarSchema();
+  const result = await getRuntimeEnv().DB.prepare("SELECT * FROM radar_style_profiles ORDER BY updated_at DESC").all<Record<string, unknown>>();
+  return result.results.map(mapStyleProfile);
+}
+
+export async function getStyleProfile(id: string): Promise<RadarStyleProfile | null> {
+  await ensureRadarSchema();
+  if (!id) return null;
+  const row = await getRuntimeEnv().DB.prepare("SELECT * FROM radar_style_profiles WHERE id = ?").bind(id).first<Record<string, unknown>>();
+  return row ? mapStyleProfile(row) : null;
+}
+
+export async function saveStyleProfile(profile: StyleProfileInput, sampleArticleIds: string[]) {
+  await ensureRadarSchema();
+  const id = crypto.randomUUID();
+  await getRuntimeEnv().DB.prepare(`INSERT INTO radar_style_profiles (
+    id, source_id, source_name, summary, audience, content_focus_json, tone_json,
+    title_patterns_json, opening_patterns_json, structure_patterns_json,
+    reasoning_patterns_json, language_traits_json, pacing, ending_patterns_json,
+    do_rules_json, avoid_rules_json, sample_article_ids_json, sample_count, updated_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  ON CONFLICT(source_id) DO UPDATE SET
+    source_name = excluded.source_name, summary = excluded.summary, audience = excluded.audience,
+    content_focus_json = excluded.content_focus_json, tone_json = excluded.tone_json,
+    title_patterns_json = excluded.title_patterns_json, opening_patterns_json = excluded.opening_patterns_json,
+    structure_patterns_json = excluded.structure_patterns_json, reasoning_patterns_json = excluded.reasoning_patterns_json,
+    language_traits_json = excluded.language_traits_json, pacing = excluded.pacing,
+    ending_patterns_json = excluded.ending_patterns_json, do_rules_json = excluded.do_rules_json,
+    avoid_rules_json = excluded.avoid_rules_json, sample_article_ids_json = excluded.sample_article_ids_json,
+    sample_count = excluded.sample_count, updated_at = CURRENT_TIMESTAMP`)
+    .bind(
+      id,
+      profile.sourceId,
+      profile.sourceName,
+      profile.summary,
+      profile.audience,
+      JSON.stringify(profile.contentFocus),
+      JSON.stringify(profile.tone),
+      JSON.stringify(profile.titlePatterns),
+      JSON.stringify(profile.openingPatterns),
+      JSON.stringify(profile.structurePatterns),
+      JSON.stringify(profile.reasoningPatterns),
+      JSON.stringify(profile.languageTraits),
+      profile.pacing,
+      JSON.stringify(profile.endingPatterns),
+      JSON.stringify(profile.doRules),
+      JSON.stringify(profile.avoidRules),
+      JSON.stringify(sampleArticleIds),
+      sampleArticleIds.length,
+    ).run();
+  const saved = await getRuntimeEnv().DB.prepare("SELECT * FROM radar_style_profiles WHERE source_id = ?").bind(profile.sourceId).first<Record<string, unknown>>();
+  if (!saved) throw new WechatApiError(-1113, "写作风格画像保存失败");
+  return mapStyleProfile(saved);
+}
+
+export function formatStyleProfileForPrompt(profile: RadarStyleProfile) {
+  return [
+    `来源：${profile.sourceName}`,
+    `风格摘要：${profile.summary}`,
+    `核心受众：${profile.audience}`,
+    `内容重心：${profile.contentFocus.join("、")}`,
+    `语气：${profile.tone.join("、")}`,
+    `标题机制：${profile.titlePatterns.join("；")}`,
+    `开场方式：${profile.openingPatterns.join("；")}`,
+    `常用结构：${profile.structurePatterns.join("；")}`,
+    `论证方式：${profile.reasoningPatterns.join("；")}`,
+    `语言特征：${profile.languageTraits.join("；")}`,
+    `行文节奏：${profile.pacing}`,
+    `结尾方式：${profile.endingPatterns.join("；")}`,
+    `建议迁移：${profile.doRules.join("；")}`,
+    `必须避免：${profile.avoidRules.join("；")}`,
+  ].join("\n");
 }
 
 export async function listRecommendations() {
@@ -152,6 +280,46 @@ function validateWechatArticleUrl(value: string) {
   } catch {
     throw new WechatApiError(-1100, "请输入完整的 mp.weixin.qq.com 文章链接");
   }
+}
+
+async function resolveArticleSource(sourceId: string | undefined, detectedName: string) {
+  const { DB } = getRuntimeEnv();
+  if (sourceId) {
+    const source = await DB.prepare("SELECT id, name FROM content_sources WHERE id = ?").bind(sourceId).first<{ id: string; name: string }>();
+    if (!source) throw new WechatApiError(-1103, "所选公众号不存在，请重新选择");
+    return source;
+  }
+  const name = detectedName.trim() || "微信公众号";
+  const existing = await DB.prepare("SELECT id, name FROM content_sources WHERE source_type = 'wechat' AND name = ? ORDER BY created_at LIMIT 1")
+    .bind(name).first<{ id: string; name: string }>();
+  if (existing) return existing;
+  const id = crypto.randomUUID();
+  await DB.prepare("INSERT INTO content_sources (id, name, source_type) VALUES (?, ?, 'wechat')").bind(id, name).run();
+  return { id, name };
+}
+
+function mapStyleProfile(row: Record<string, unknown>): RadarStyleProfile {
+  return {
+    id: String(row.id),
+    sourceId: String(row.source_id),
+    sourceName: String(row.source_name),
+    summary: String(row.summary),
+    audience: String(row.audience),
+    contentFocus: safeStringArray(row.content_focus_json),
+    tone: safeStringArray(row.tone_json),
+    titlePatterns: safeStringArray(row.title_patterns_json),
+    openingPatterns: safeStringArray(row.opening_patterns_json),
+    structurePatterns: safeStringArray(row.structure_patterns_json),
+    reasoningPatterns: safeStringArray(row.reasoning_patterns_json),
+    languageTraits: safeStringArray(row.language_traits_json),
+    pacing: String(row.pacing),
+    endingPatterns: safeStringArray(row.ending_patterns_json),
+    doRules: safeStringArray(row.do_rules_json),
+    avoidRules: safeStringArray(row.avoid_rules_json),
+    sampleArticleIds: safeStringArray(row.sample_article_ids_json),
+    sampleCount: Number(row.sample_count) || 0,
+    updatedAt: String(row.updated_at),
+  };
 }
 
 function readMeta(html: string, key: string) {
@@ -211,4 +379,9 @@ function calculateHotScore(input: { readCount: number; likeCount: number; publis
 
 function safeJson(value: string, fallback: unknown) {
   try { return JSON.parse(value); } catch { return fallback; }
+}
+
+function safeStringArray(value: unknown) {
+  const parsed = safeJson(String(value ?? "[]"), []);
+  return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
 }

@@ -36,6 +36,12 @@ type StructuredInput = {
   maxOutputTokens?: number;
 };
 
+type TextInput = {
+  instructions: string;
+  prompt: string;
+  maxOutputTokens?: number;
+};
+
 export type SafeAIStatus = {
   configured: boolean;
   provider: AIProvider;
@@ -150,8 +156,33 @@ export async function generateStructured<T>(input: StructuredInput): Promise<T> 
   const outputText = normalizeProvider(row.provider) === "litellm"
     ? await generateViaChatCompletions({ row, baseUrl, apiKey, input })
     : await generateViaResponses({ row, baseUrl, apiKey, input });
-  try { return JSON.parse(stripCodeFence(outputText)) as T; }
-  catch { throw new WechatApiError(-1203, "AI 分析结果格式不完整，请重新生成"); }
+  const parsed = tryParseStructuredOutput<T>(outputText);
+  if (parsed.ok) return parsed.value;
+
+  const repairInput: StructuredInput = {
+    schemaName: `${input.schemaName}_repair`.slice(0, 64),
+    schema: input.schema,
+    maxOutputTokens: Math.max(input.maxOutputTokens ?? 3000, 5000),
+    instructions: "你是 JSON 结果修复器。只输出符合给定 JSON Schema 的完整 JSON 对象，不要解释，不要输出 Markdown 代码围栏。若原结果被截断，请依据已有内容补全缺失字段，但不要添加 Schema 之外的字段。",
+    prompt: `请修复下面的模型结果并输出完整 JSON：\n\n${outputText.slice(0, 24000)}`,
+  };
+  const repairedText = normalizeProvider(row.provider) === "litellm"
+    ? await generateViaChatCompletions({ row, baseUrl, apiKey, input: repairInput })
+    : await generateViaResponses({ row, baseUrl, apiKey, input: repairInput });
+  const repaired = tryParseStructuredOutput<T>(repairedText);
+  if (repaired.ok) return repaired.value;
+  throw new WechatApiError(-1203, "AI 返回格式异常，系统已自动重试但仍未完成，请更换模型后再试");
+}
+
+export async function generateText(input: TextInput): Promise<string> {
+  await ensureAISettingsSchema();
+  const row = await getSettingsRow();
+  if (!row) throw new WechatApiError(-1200, "AI 模型尚未在页面中配置");
+  const apiKey = await decryptSecret(row.api_key_ciphertext, row.api_key_iv);
+  const baseUrl = validateBaseUrl(row.base_url);
+  return normalizeProvider(row.provider) === "litellm"
+    ? generateTextViaChatCompletions({ row, baseUrl, apiKey, input })
+    : generateTextViaResponses({ row, baseUrl, apiKey, input });
 }
 
 async function generateViaResponses(input: { row: AISettingsRow; baseUrl: string; apiKey: string; input: StructuredInput }) {
@@ -206,6 +237,45 @@ async function generateViaChatCompletions(input: { row: AISettingsRow; baseUrl: 
   }
   const data = await parseJsonResponse(response, "LiteLLM 网关");
   if (!response.ok) throwServiceError(response.status, data);
+  return extractChatCompletionText(data);
+}
+
+async function generateTextViaResponses(input: { row: AISettingsRow; baseUrl: string; apiKey: string; input: TextInput }) {
+  const response = await fetch(buildAIUrl(input.baseUrl, "responses"), {
+    method: "POST",
+    headers: authJsonHeaders(input.apiKey),
+    body: JSON.stringify({
+      model: input.row.model,
+      instructions: input.input.instructions,
+      input: input.input.prompt,
+      store: false,
+      max_output_tokens: input.input.maxOutputTokens ?? 6000,
+    }),
+  });
+  const data = await parseJsonResponse(response, "AI 服务");
+  if (!response.ok) throwServiceError(response.status, data);
+  return extractResponseOutputText(data);
+}
+
+async function generateTextViaChatCompletions(input: { row: AISettingsRow; baseUrl: string; apiKey: string; input: TextInput }) {
+  const response = await fetch(buildAIUrl(input.baseUrl, "chat/completions"), {
+    method: "POST",
+    headers: authJsonHeaders(input.apiKey),
+    body: JSON.stringify({
+      model: input.row.model,
+      messages: [
+        { role: "system", content: input.input.instructions },
+        { role: "user", content: input.input.prompt },
+      ],
+      max_tokens: input.input.maxOutputTokens ?? 6000,
+    }),
+  });
+  const data = await parseJsonResponse(response, "LiteLLM 网关");
+  if (!response.ok) throwServiceError(response.status, data);
+  return extractChatCompletionText(data);
+}
+
+function extractChatCompletionText(data: Record<string, unknown>) {
   const choices = Array.isArray(data.choices) ? data.choices : [];
   const message = choices[0] && typeof choices[0] === "object"
     ? (choices[0] as { message?: { content?: unknown } }).message
@@ -291,6 +361,21 @@ function extractResponseOutputText(data: Record<string, unknown>) {
 
 function stripCodeFence(value: string) {
   return value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+}
+
+function tryParseStructuredOutput<T>(value: string): { ok: true; value: T } | { ok: false } {
+  const normalized = stripCodeFence(value
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/^[\s\S]*?<\/think>/i, "")
+    .trim());
+  const firstBrace = normalized.indexOf("{");
+  const lastBrace = normalized.lastIndexOf("}");
+  const candidates = [normalized];
+  if (firstBrace >= 0 && lastBrace > firstBrace) candidates.push(normalized.slice(firstBrace, lastBrace + 1));
+  for (const candidate of candidates) {
+    try { return { ok: true, value: JSON.parse(candidate) as T }; } catch { /* try the extracted JSON object */ }
+  }
+  return { ok: false };
 }
 
 function normalizeProvider(value?: string): AIProvider {

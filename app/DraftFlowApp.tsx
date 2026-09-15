@@ -163,7 +163,7 @@ export function DraftFlowApp({ today }: { today: string }) {
               <div className="panel-head"><div><h2>快速开始</h2><p>选择一种创作方式</p></div></div>
               <button className="quick-main" onClick={openEditor}><span>＋</span><div><strong>新建空白文章</strong><small>从头开始创作</small></div><b>→</b></button>
               <button className="quick-row" onClick={() => markdownFileInputRef.current?.click()}><span className="mini-icon">M</span><div><strong>导入 Markdown</strong><small>支持 .md / .markdown 文件</small></div><b>→</b></button>
-              <button className="quick-row" onClick={() => setActive("radar")}><span className="mini-icon">雷</span><div><strong>内容雷达</strong><small>分析热门文章并推荐选题</small></div><b>→</b></button>
+              <button className="quick-row" onClick={() => setActive("radar")}><span className="mini-icon">雷</span><div><strong>内容雷达</strong><small>分析作者风格并生成原创草稿</small></div><b>→</b></button>
             </aside>
           </div>
 

@@ -1,5 +1,5 @@
 import { generateStructured, getAIStatus } from "@/lib/ai";
-import { listRadarArticles, listRecommendations, saveRecommendations } from "@/lib/radar";
+import { formatStyleProfileForPrompt, getStyleProfile, listRadarArticles, listRecommendations, saveRecommendations } from "@/lib/radar";
 import { assertSameOrigin, errorResponse } from "@/lib/wechat";
 
 type AIRecommendations = { recommendations: Array<{ title: string; angle: string; audience: string; outline: string[]; keywords: string[]; predictedScore: number }> };
@@ -12,7 +12,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     assertSameOrigin(request);
-    const body = await request.json<{ articleIds?: string[]; topic?: string }>();
+    const body = await request.json<{ articleIds?: string[]; topic?: string; styleProfileId?: string }>();
     const all = await listRadarArticles();
     const selected = (body.articleIds?.length ? all.filter((article) => body.articleIds?.includes(article.id)) : all.slice(0, 5)).slice(0, 8);
     if (!selected.length) return Response.json({ ok: false, error: "请先导入至少一篇参考文章" }, { status: 400 });
@@ -26,9 +26,12 @@ export async function POST(request: Request) {
       await saveRecommendations(fallback, selected.map((article) => article.id));
       return Response.json({ ok: true, mode: "rules", recommendations: await listRecommendations() });
     }
+    const profile = await getStyleProfile(body.styleProfileId?.trim() ?? "");
     const sourceText = selected.map((article, index) => `参考 ${index + 1}\n公众号：${article.source_name}\n标题：${article.title}\n摘要：${article.digest}\n正文摘录：${article.content_excerpt.slice(0, 2200)}\n预测热度：${article.hot_score}`).join("\n\n");
+    const styleText = profile ? `\n\n目标写作画像（只迁移高层特征）：\n${formatStyleProfileForPrompt(profile)}` : "";
     const result = await generateStructured<AIRecommendations>({
       schemaName: "draftflow_content_recommendations",
+      maxOutputTokens: 6000,
       schema: {
         type: "object",
         additionalProperties: false,
@@ -42,8 +45,8 @@ export async function POST(request: Request) {
         },
         required: ["recommendations"],
       },
-      instructions: "你是微信公众号选题分析师。分析共同主题、读者需求、标题机制和内容结构，生成原创选题。不得复刻原文表达、独特案例、数据或段落，不得冒充来源作者。输出必须适合中文技术类公众号。",
-      prompt: `用户关注方向：${body.topic?.trim() || "技术、AI 与运维"}\n\n${sourceText}`,
+      instructions: "你是微信公众号选题分析师。分析共同主题、读者需求、标题机制和内容结构，生成原创选题。如果提供写作画像，可让标题机制、内容结构和读者沟通方式与画像相容，但不得复刻原文表达、标志性口头禅、独特案例、数据或段落，不得冒充来源作者。输出必须适合中文技术类公众号。",
+      prompt: `用户关注方向：${body.topic?.trim() || "技术、AI 与运维"}\n\n${sourceText}${styleText}`,
     });
     await saveRecommendations(result.recommendations, selected.map((article) => article.id));
     return Response.json({ ok: true, recommendations: await listRecommendations() });

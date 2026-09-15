@@ -132,3 +132,30 @@ export const contentRecommendations = sqliteTable(
   },
   (table) => [index("idx_content_recommendations_created_at").on(table.createdAt)],
 );
+
+export const radarStyleProfiles = sqliteTable(
+  "radar_style_profiles",
+  {
+    id: text("id").primaryKey(),
+    sourceId: text("source_id").notNull().unique(),
+    sourceName: text("source_name").notNull(),
+    summary: text("summary").notNull(),
+    audience: text("audience").notNull(),
+    contentFocusJson: text("content_focus_json").notNull(),
+    toneJson: text("tone_json").notNull(),
+    titlePatternsJson: text("title_patterns_json").notNull(),
+    openingPatternsJson: text("opening_patterns_json").notNull(),
+    structurePatternsJson: text("structure_patterns_json").notNull(),
+    reasoningPatternsJson: text("reasoning_patterns_json").notNull(),
+    languageTraitsJson: text("language_traits_json").notNull(),
+    pacing: text("pacing").notNull(),
+    endingPatternsJson: text("ending_patterns_json").notNull(),
+    doRulesJson: text("do_rules_json").notNull(),
+    avoidRulesJson: text("avoid_rules_json").notNull(),
+    sampleArticleIdsJson: text("sample_article_ids_json").notNull(),
+    sampleCount: integer("sample_count").notNull().default(1),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("idx_radar_style_profiles_updated_at").on(table.updatedAt)],
+);
